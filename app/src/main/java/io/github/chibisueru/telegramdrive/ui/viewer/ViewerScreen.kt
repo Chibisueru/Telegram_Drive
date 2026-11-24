@@ -64,6 +64,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
+import io.github.chibisueru.telegramdrive.container
 import io.github.chibisueru.telegramdrive.data.db.FileEntity
 import io.github.chibisueru.telegramdrive.ui.appViewModel
 import io.github.chibisueru.telegramdrive.ui.browser.icon
@@ -282,6 +283,7 @@ private fun contentUri(context: Context, file: File) =
     FileProvider.getUriForFile(context, "${context.packageName}.files", file)
 
 private fun share(context: Context, entity: FileEntity, file: File) {
+    context.container.appLock.allowExternalActivity()
     val intent = Intent(Intent.ACTION_SEND)
         .setType(entity.mimeType)
         .putExtra(Intent.EXTRA_STREAM, contentUri(context, file))
@@ -290,6 +292,7 @@ private fun share(context: Context, entity: FileEntity, file: File) {
 }
 
 private fun openWith(context: Context, entity: FileEntity, file: File) {
+    context.container.appLock.allowExternalActivity()
     val intent = Intent(Intent.ACTION_VIEW)
         .setDataAndType(contentUri(context, file), entity.mimeType)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)

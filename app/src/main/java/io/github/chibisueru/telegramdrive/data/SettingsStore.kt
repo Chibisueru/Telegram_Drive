@@ -14,7 +14,12 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
-enum class SortMode { NAME, NEWEST, SIZE }
+enum class SortMode { NAME, NEWEST, OLDEST, LARGEST, SMALLEST, TYPE }
+
+enum class ViewMode { LIST, COMPACT, GRID, LARGE_GRID, GALLERY }
+
+/** How long the app may stay in the background before the PIN is asked again. */
+enum class LockTimeout(val millis: Long) { IMMEDIATELY(0), ONE_MINUTE(60_000), FIVE_MINUTES(300_000) }
 
 data class AppSettings(
     /** From my.telegram.org; TDLib needs them every time it starts. */
@@ -27,12 +32,29 @@ data class AppSettings(
     val dynamicColor: Boolean = true,
     /** 0 = follow system, 1 = light, 2 = dark */
     val themeMode: Int = 0,
-    val gridView: Boolean = false,
+    val viewMode: ViewMode = ViewMode.LIST,
     val sortMode: SortMode = SortMode.NAME,
+    /** Uploads and downloads only run on Wi-Fi (or Ethernet). */
+    val wifiOnly: Boolean = false,
+    /** PBKDF2 hash of the app PIN; empty when no PIN is set. */
+    val pinHash: String = "",
+    val pinSalt: String = "",
+    val biometricUnlock: Boolean = false,
+    val lockTimeout: LockTimeout = LockTimeout.IMMEDIATELY,
+    /** Automatically upload new photos (and videos) from DCIM/Camera. */
+    val cameraBackup: Boolean = false,
+    val cameraVideos: Boolean = true,
+    val cameraWifiOnly: Boolean = true,
+    val cameraChargingOnly: Boolean = false,
+    /** MediaStore _ID of the newest item already queued; only newer items are backed up. */
+    val cameraLastMediaId: Long = 0,
+    /** The drive folder camera backups go into. */
+    val cameraFolderId: String = "",
     val indexMessageId: Long = 0,
     val lastSyncAt: Long = 0,
 ) {
     val isConfigured: Boolean get() = apiId != 0 && apiHash.isNotBlank() && chatId != 0L
+    val pinEnabled: Boolean get() = pinHash.isNotEmpty()
 }
 
 class SettingsStore(private val context: Context) {
@@ -44,7 +66,19 @@ class SettingsStore(private val context: Context) {
         val chatTitle = stringPreferencesKey("chat_title")
         val dynamicColor = booleanPreferencesKey("dynamic_color")
         val themeMode = intPreferencesKey("theme_mode")
-        val gridView = booleanPreferencesKey("grid_view")
+        val gridView = booleanPreferencesKey("grid_view") // legacy, read once
+        val viewMode = stringPreferencesKey("view_mode")
+        val wifiOnly = booleanPreferencesKey("wifi_only")
+        val pinHash = stringPreferencesKey("pin_hash")
+        val pinSalt = stringPreferencesKey("pin_salt")
+        val biometricUnlock = booleanPreferencesKey("biometric_unlock")
+        val lockTimeout = stringPreferencesKey("lock_timeout")
+        val cameraBackup = booleanPreferencesKey("camera_backup")
+        val cameraVideos = booleanPreferencesKey("camera_videos")
+        val cameraWifiOnly = booleanPreferencesKey("camera_wifi_only")
+        val cameraChargingOnly = booleanPreferencesKey("camera_charging_only")
+        val cameraLastMediaId = longPreferencesKey("camera_last_media_id")
+        val cameraFolderId = stringPreferencesKey("camera_folder_id")
         val sortMode = stringPreferencesKey("sort_mode")
         val indexMessageId = longPreferencesKey("index_message_id")
         val lastSyncAt = longPreferencesKey("last_sync_at")
@@ -62,7 +96,19 @@ class SettingsStore(private val context: Context) {
         chatTitle = this[Keys.chatTitle].orEmpty(),
         dynamicColor = this[Keys.dynamicColor] ?: true,
         themeMode = this[Keys.themeMode] ?: 0,
-        gridView = this[Keys.gridView] ?: false,
+        viewMode = this[Keys.viewMode]?.let { runCatching { ViewMode.valueOf(it) }.getOrNull() }
+            ?: if (this[Keys.gridView] == true) ViewMode.GRID else ViewMode.LIST,
+        wifiOnly = this[Keys.wifiOnly] ?: false,
+        pinHash = this[Keys.pinHash].orEmpty(),
+        pinSalt = this[Keys.pinSalt].orEmpty(),
+        biometricUnlock = this[Keys.biometricUnlock] ?: false,
+        lockTimeout = this[Keys.lockTimeout]?.let { runCatching { LockTimeout.valueOf(it) }.getOrNull() } ?: LockTimeout.IMMEDIATELY,
+        cameraBackup = this[Keys.cameraBackup] ?: false,
+        cameraVideos = this[Keys.cameraVideos] ?: true,
+        cameraWifiOnly = this[Keys.cameraWifiOnly] ?: true,
+        cameraChargingOnly = this[Keys.cameraChargingOnly] ?: false,
+        cameraLastMediaId = this[Keys.cameraLastMediaId] ?: 0,
+        cameraFolderId = this[Keys.cameraFolderId].orEmpty(),
         sortMode = this[Keys.sortMode]?.let { runCatching { SortMode.valueOf(it) }.getOrNull() } ?: SortMode.NAME,
         indexMessageId = this[Keys.indexMessageId] ?: 0,
         lastSyncAt = this[Keys.lastSyncAt] ?: 0,
@@ -94,7 +140,29 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setDynamicColor(v: Boolean) = context.dataStore.edit { it[Keys.dynamicColor] = v }
     suspend fun setThemeMode(v: Int) = context.dataStore.edit { it[Keys.themeMode] = v }
-    suspend fun setGridView(v: Boolean) = context.dataStore.edit { it[Keys.gridView] = v }
+    suspend fun setViewMode(v: ViewMode) = context.dataStore.edit { it[Keys.viewMode] = v.name }
+    suspend fun setWifiOnly(v: Boolean) = context.dataStore.edit { it[Keys.wifiOnly] = v }
+    suspend fun setBiometricUnlock(v: Boolean) = context.dataStore.edit { it[Keys.biometricUnlock] = v }
+    suspend fun setLockTimeout(v: LockTimeout) = context.dataStore.edit { it[Keys.lockTimeout] = v.name }
+    suspend fun setPin(hash: String, salt: String) = context.dataStore.edit {
+        it[Keys.pinHash] = hash
+        it[Keys.pinSalt] = salt
+    }
+    suspend fun setCameraBackup(enabled: Boolean, lastMediaId: Long? = null) = context.dataStore.edit {
+        it[Keys.cameraBackup] = enabled
+        if (lastMediaId != null) it[Keys.cameraLastMediaId] = lastMediaId
+    }
+    suspend fun setCameraVideos(v: Boolean) = context.dataStore.edit { it[Keys.cameraVideos] = v }
+    suspend fun setCameraWifiOnly(v: Boolean) = context.dataStore.edit { it[Keys.cameraWifiOnly] = v }
+    suspend fun setCameraChargingOnly(v: Boolean) = context.dataStore.edit { it[Keys.cameraChargingOnly] = v }
+    suspend fun setCameraLastMediaId(v: Long) = context.dataStore.edit { it[Keys.cameraLastMediaId] = v }
+    suspend fun setCameraFolderId(v: String) = context.dataStore.edit { it[Keys.cameraFolderId] = v }
+
+    suspend fun clearPin() = context.dataStore.edit {
+        it.remove(Keys.pinHash)
+        it.remove(Keys.pinSalt)
+        it[Keys.biometricUnlock] = false
+    }
     suspend fun setSortMode(v: SortMode) = context.dataStore.edit { it[Keys.sortMode] = v.name }
     suspend fun setIndexSynced(messageId: Long, at: Long) = context.dataStore.edit {
         it[Keys.indexMessageId] = messageId

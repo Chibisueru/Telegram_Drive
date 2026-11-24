@@ -26,6 +26,10 @@ import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.RestoreFromTrash
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarOutline
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
@@ -72,7 +76,6 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.work.WorkInfo
 import coil3.compose.AsyncImage
 import io.github.chibisueru.telegramdrive.container
 import io.github.chibisueru.telegramdrive.data.db.FileEntity
@@ -133,16 +136,16 @@ private fun FolderVisual(modifier: Modifier, iconSize: Int = 24) {
     }
 }
 
-private fun subtitle(item: DriveItem) = when (item) {
+private fun subtitle(item: DriveItem) = (if (item.starred) "★ " else "") + when (item) {
     is DriveItem.Folder -> "Folder · ${formatDate(item.folder.createdAt)}"
     is DriveItem.File -> "${formatSize(item.file.size)} · ${formatDate(item.file.createdAt)}"
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun DriveListRow(item: DriveItem, onClick: () -> Unit, onMore: () -> Unit) {
+fun DriveListRow(item: DriveItem, onClick: () -> Unit, onMore: () -> Unit, onLongClick: () -> Unit = onMore) {
     ListItem(
-        modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onMore),
+        modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick),
         leadingContent = {
             val m = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
             when (item) {
@@ -161,13 +164,13 @@ fun DriveListRow(item: DriveItem, onClick: () -> Unit, onMore: () -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun DriveGridCell(item: DriveItem, onClick: () -> Unit, onMore: () -> Unit) {
+fun DriveGridCell(item: DriveItem, onClick: () -> Unit, onMore: () -> Unit, onLongClick: () -> Unit = onMore) {
     OutlinedCard(
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onMore),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         val visual = Modifier.fillMaxWidth().aspectRatio(1.25f)
         when (item) {
@@ -178,7 +181,7 @@ fun DriveGridCell(item: DriveItem, onClick: () -> Unit, onMore: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(item.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
                 Text(
-                    if (item is DriveItem.File) formatSize(item.file.size) else "Folder",
+                    (if (item.starred) "★ " else "") + if (item is DriveItem.File) formatSize(item.file.size) else "Folder",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -205,11 +208,15 @@ private fun Modifier.combinedClickableCompat(onClick: () -> Unit) = this.combine
 @Composable
 fun ItemActions(
     item: DriveItem,
+    inTrash: Boolean,
     onOpen: () -> Unit,
     onDownload: () -> Unit,
     onRename: () -> Unit,
     onMove: () -> Unit,
-    onDelete: () -> Unit,
+    onStar: () -> Unit,
+    onTrash: () -> Unit,
+    onRestore: () -> Unit,
+    onDeleteForever: () -> Unit,
 ) {
     Column(Modifier.navigationBarsPadding().padding(bottom = 8.dp)) {
         Row(Modifier.padding(horizontal = 24.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -224,11 +231,21 @@ fun ItemActions(
             }
         }
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        if (inTrash) {
+            SheetAction(Icons.Default.RestoreFromTrash, "Restore", onRestore)
+            SheetAction(Icons.Default.DeleteForever, "Delete permanently", onDeleteForever, tint = MaterialTheme.colorScheme.error)
+            return@Column
+        }
         SheetAction(if (item is DriveItem.Folder) Icons.Default.Folder else Icons.Default.Visibility, "Open", onOpen)
         if (item is DriveItem.File) SheetAction(Icons.Default.Download, "Download to phone", onDownload)
+        SheetAction(
+            if (item.starred) Icons.Default.StarOutline else Icons.Default.Star,
+            if (item.starred) "Remove from Favorites" else "Add to Favorites",
+            onStar,
+        )
         SheetAction(Icons.Default.Edit, "Rename", onRename)
         SheetAction(Icons.AutoMirrored.Filled.DriveFileMove, "Move", onMove)
-        SheetAction(Icons.Default.Delete, "Delete", onDelete, tint = MaterialTheme.colorScheme.error)
+        SheetAction(Icons.Default.Delete, "Move to trash", onTrash, tint = MaterialTheme.colorScheme.error)
     }
 }
 
@@ -258,17 +275,12 @@ fun NameDialog(title: String, initial: String, confirmLabel: String, onDismiss: 
 }
 
 @Composable
-fun ConfirmDeleteDialog(item: DriveItem, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+fun DeleteForeverDialog(label: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.Delete, null) },
-        title = { Text("Delete “${item.name}”?") },
-        text = {
-            Text(
-                if (item is DriveItem.Folder) "The folder and everything inside it will be removed from your drive and the Telegram channel."
-                else "The file will be removed from your drive and the Telegram channel."
-            )
-        },
+        icon = { Icon(Icons.Default.DeleteForever, null) },
+        title = { Text("Delete $label permanently?") },
+        text = { Text("This removes the files from your Telegram channel too. It can't be undone.") },
         confirmButton = {
             TextButton(onClick = onConfirm) { Text("Delete", color = MaterialTheme.colorScheme.error) }
         },
@@ -278,17 +290,25 @@ fun ConfirmDeleteDialog(item: DriveItem, onDismiss: () -> Unit, onConfirm: () ->
 
 /** Lets the user browse the folder tree and pick a destination. */
 @Composable
-fun MoveDialog(item: DriveItem, folders: List<FolderEntity>, onDismiss: () -> Unit, onMove: (String?) -> Unit) {
+fun MoveDialog(
+    title: String,
+    folders: List<FolderEntity>,
+    onDismiss: () -> Unit,
+    confirmLabel: String = "Move here",
+    /** Folders that can't be a destination (the ones being moved). */
+    exclude: Set<String> = emptySet(),
+    onMove: (String?) -> Unit,
+) {
     var location by remember { mutableStateOf<String?>(null) }
     val byId = remember(folders) { folders.associateBy { it.id } }
     val children = remember(folders, location) {
-        folders.filter { it.parentId == location && it.id != item.id }
+        folders.filter { it.parentId == location && it.id !in exclude }
             .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
     }
     val current = location?.let { byId[it] }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Move “${item.name}”") },
+        title = { Text(title) },
         text = {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -319,77 +339,70 @@ fun MoveDialog(item: DriveItem, folders: List<FolderEntity>, onDismiss: () -> Un
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onMove(location) }) { Text("Move here") } },
+        confirmButton = { TextButton(onClick = { onMove(location) }) { Text(confirmLabel) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
+/** A dense one-line row: icon, name, size. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TransfersList(transfers: List<Transfer>, onCancel: (Transfer) -> Unit, onClear: () -> Unit) {
-    Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Transfers", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            if (transfers.any { !it.active }) TextButton(onClick = onClear) { Text("Clear finished") }
+fun DriveCompactRow(item: DriveItem, onClick: () -> Unit, onMore: () -> Unit, onLongClick: () -> Unit = onMore) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(start = 16.dp, end = 4.dp)
+            .heightIn(min = 48.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val m = Modifier.size(28.dp).clip(RoundedCornerShape(8.dp))
+        when (item) {
+            is DriveItem.Folder -> FolderVisual(m, 18)
+            is DriveItem.File -> FileVisual(item.file, m, 18)
         }
-        if (transfers.isEmpty()) {
-            Text("Nothing here yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(24.dp))
+        Text(
+            item.name,
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.MiddleEllipsis,
+            modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
+        )
+        if (item is DriveItem.File) {
+            Text(formatSize(item.file.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        LazyColumn(Modifier.heightIn(max = 480.dp)) {
-            items(transfers, key = { it.id }) { t ->
-                ListItem(
-                    leadingContent = {
-                        val failed = t.error != null || t.state == WorkInfo.State.FAILED || t.state == WorkInfo.State.CANCELLED
-                        val done = t.state == WorkInfo.State.SUCCEEDED && t.error == null
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = when {
-                                failed -> MaterialTheme.colorScheme.errorContainer
-                                done -> MaterialTheme.colorScheme.primaryContainer
-                                else -> MaterialTheme.colorScheme.secondaryContainer
-                            },
-                            modifier = Modifier.size(40.dp),
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    when {
-                                        failed -> Icons.Default.Error
-                                        done -> Icons.Default.CheckCircle
-                                        t.upload -> Icons.Default.Upload
-                                        else -> Icons.Default.Download
-                                    },
-                                    null,
-                                )
-                            }
-                        }
-                    },
-                    headlineContent = { Text(t.name, maxLines = 1, overflow = TextOverflow.MiddleEllipsis) },
-                    supportingContent = {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                when {
-                                    t.error != null -> t.error
-                                    t.state == WorkInfo.State.SUCCEEDED -> if (t.upload) "Uploaded" else "Saved to Downloads"
-                                    t.state == WorkInfo.State.CANCELLED -> "Cancelled"
-                                    t.state == WorkInfo.State.RUNNING -> (if (t.upload) "Uploading" else "Downloading") +
-                                        (t.progress?.let { " · ${(it * 100).toInt()}%" } ?: "")
-                                    else -> "Waiting…"
-                                },
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (t.active) {
-                                val p = t.progress
-                                if (p != null) LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth())
-                                else LinearProgressIndicator(Modifier.fillMaxWidth())
-                            }
-                        }
-                    },
-                    trailingContent = {
-                        if (t.active) IconButton(onClick = { onCancel(t) }) { Icon(Icons.Default.Close, "Cancel") }
-                    },
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                )
-            }
+        IconButton(onClick = onMore) { Icon(Icons.Default.MoreVert, "More options") }
+    }
+}
+
+/** A square, text-free tile for the photo-wall style gallery view. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun DriveGalleryTile(item: DriveItem, onClick: () -> Unit, onMore: () -> Unit, onLongClick: () -> Unit = onMore) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(4.dp))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+    ) {
+        when (item) {
+            is DriveItem.Folder -> FolderVisual(Modifier.fillMaxSize(), 36)
+            is DriveItem.File -> FileVisual(item.file, Modifier.fillMaxSize(), 36)
+        }
+        // Folders and files without a thumbnail need their name to be recognisable.
+        if (item is DriveItem.Folder || (item as DriveItem.File).file.thumbRemoteId == null) {
+            Text(
+                item.name,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.75f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
         }
     }
 }

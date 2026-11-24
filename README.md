@@ -10,6 +10,17 @@ channel in your own Telegram account, so storage costs nothing.
   Anything else can be opened in another app or shared.
 - **Up to 2 GB per file** (4 GB with Telegram Premium). Each file is one Telegram message.
 - **Works on all your phones**: sign in on another phone and your drive and folders come back.
+- **Background transfers**: uploads and downloads run one after another in a queue that keeps
+  going with the screen off. The notification shows two bars: files done and the current file.
+  The **Transfers** tab lists everything, with cancel and retry. Optional **Wi-Fi only** mode.
+- **App lock**: optional PIN, with fingerprint/face unlock. The PIN always works as a fallback.
+- **Share to the app**: "Share → Telegram Drive" from any app uploads files into a folder you pick.
+- **Select several items** (long-press) to download, move, favorite or delete them together.
+- **Trash**: deleted items can be restored for 30 days (with an instant Undo).
+- **Camera backup**: new photos and videos from DCIM/Camera upload automatically, optionally
+  only on Wi-Fi and while charging.
+- **Favorites and Recent** shortcuts at the top of My Drive.
+- Five views (list, compact list, grid, large grid, gallery) and six sort orders.
 - Material You dynamic color, light/dark theme, edge-to-edge, predictive back.
 - Requires **Android 16 (API 36) or newer**.
 
@@ -47,10 +58,12 @@ through [TDLib](https://github.com/tdlib/td), Telegram's official client library
 | Uploads, downloads, thumbnails | `telegram/TgFiles.kt` |
 | Finding or creating the drive channel | `telegram/DriveProvisioner.kt` |
 | ExoPlayer `DataSource` that plays while TDLib downloads | `player/TelegramDataSource.kt` |
-| Uploads/downloads as foreground WorkManager jobs | `work/UploadWorker.kt`, `work/DownloadWorker.kt` |
+| Transfer queue (Room) and the foreground service that works through it | `transfer/` |
+| PIN lock and biometrics | `security/` |
+| Camera backup (WorkManager job watching MediaStore) | `backup/CameraBackup.kt` |
 | Local index (Room): folders and which message holds which file | `data/db/` |
 | Index backup to the channel | `data/IndexSync.kt` |
-| Screens | `ui/setup`, `ui/browser`, `ui/viewer`, `ui/settings` |
+| Screens | `ui/setup`, `ui/browser`, `ui/transfers`, `ui/viewer`, `ui/settings`, `ui/security` |
 
 **Files** are document messages in the drive channel, with a thumbnail for photos and videos.
 
@@ -69,6 +82,8 @@ channel and supports nested folders.
 
 ## Limits and caveats
 
+- **The PIN protects the app's screens, not its files.** It stops someone with your unlocked
+  phone from opening the drive. It doesn't encrypt the Telegram session stored by the app.
 - **Your Telegram session is stored on the phone** (app-private, excluded from backups) so you
   stay signed in. Anyone who can extract it could use your Telegram account. Use a phone lock
   screen. You can end the session at any time in Telegram → Settings → Devices, or with

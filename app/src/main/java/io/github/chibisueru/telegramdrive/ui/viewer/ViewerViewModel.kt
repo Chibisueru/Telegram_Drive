@@ -30,6 +30,11 @@ sealed interface CacheState {
 class ViewerViewModel(private val c: AppContainer, private val fileId: String) : ViewModel() {
     val file: StateFlow<FileEntity?> = c.dao.fileFlow(fileId).stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    init {
+        // For the "Recent" view.
+        viewModelScope.launch { c.repository.markOpened(fileId) }
+    }
+
     private val _cache = MutableStateFlow<CacheState>(CacheState.Idle)
     val cache: StateFlow<CacheState> = _cache
     private var cacheJob: Job? = null
@@ -79,8 +84,10 @@ class ViewerViewModel(private val c: AppContainer, private val fileId: String) :
 
     fun download() {
         val entity = file.value ?: return
-        c.repository.enqueueDownload(entity)
-        _events.trySend("Saving to Downloads/Telegram Drive")
+        viewModelScope.launch {
+            c.repository.enqueueDownload(entity)
+            _events.send("Saving to Downloads/Telegram Drive")
+        }
     }
 
     override fun onCleared() {

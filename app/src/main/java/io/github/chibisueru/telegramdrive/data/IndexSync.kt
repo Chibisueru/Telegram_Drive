@@ -119,7 +119,9 @@ class IndexSync(
         .put("folders", JSONArray().apply {
             dao.allFolders().forEach { f ->
                 put(JSONObject().put("id", f.id).put("parentId", f.parentId ?: JSONObject.NULL)
-                    .put("name", f.name).put("createdAt", f.createdAt))
+                    .put("name", f.name).put("createdAt", f.createdAt)
+                    .put("deletedAt", f.deletedAt ?: JSONObject.NULL).put("trashedRoot", f.trashedRoot)
+                    .put("starred", f.starred))
             }
         })
         .put("files", JSONArray().apply {
@@ -129,17 +131,29 @@ class IndexSync(
                     .put("name", f.name).put("mimeType", f.mimeType).put("size", f.size)
                     .put("createdAt", f.createdAt).put("messageId", f.messageId)
                     .put("remoteId", f.remoteId)
-                    .put("thumbRemoteId", f.thumbRemoteId ?: JSONObject.NULL))
+                    .put("thumbRemoteId", f.thumbRemoteId ?: JSONObject.NULL)
+                    .put("deletedAt", f.deletedAt ?: JSONObject.NULL).put("trashedRoot", f.trashedRoot)
+                    .put("starred", f.starred))
             }
         })
 
     private suspend fun import(json: JSONObject) {
         val folders = mutableListOf<FolderEntity>()
         val fileRows = mutableListOf<FileEntity>()
+        // "Recently opened" is per phone: keep this phone's history across a restore.
+        val opened = dao.allFiles().mapNotNull { f -> f.lastOpenedAt?.let { f.id to it } }.toMap()
         json.optJSONArray("folders")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                folders += FolderEntity(o.getString("id"), o.optStringOrNull("parentId"), o.getString("name"), o.optLong("createdAt"))
+                folders += FolderEntity(
+                    id = o.getString("id"),
+                    parentId = o.optStringOrNull("parentId"),
+                    name = o.getString("name"),
+                    createdAt = o.optLong("createdAt"),
+                    deletedAt = o.optLongOrNull("deletedAt"),
+                    trashedRoot = o.optBoolean("trashedRoot"),
+                    starred = o.optBoolean("starred"),
+                )
             }
         }
         json.optJSONArray("files")?.let { arr ->
@@ -155,11 +169,18 @@ class IndexSync(
                     messageId = o.getLong("messageId"),
                     remoteId = o.getString("remoteId"),
                     thumbRemoteId = o.optStringOrNull("thumbRemoteId"),
+                    deletedAt = o.optLongOrNull("deletedAt"),
+                    trashedRoot = o.optBoolean("trashedRoot"),
+                    starred = o.optBoolean("starred"),
+                    lastOpenedAt = opened[o.getString("id")],
                 )
             }
         }
         dao.replaceAll(folders, fileRows)
     }
+
+    private fun JSONObject.optLongOrNull(key: String): Long? =
+        if (!has(key) || isNull(key)) null else optLong(key)
 
     private fun JSONObject.optStringOrNull(key: String): String? =
         if (isNull(key)) null else optString(key).ifEmpty { null }

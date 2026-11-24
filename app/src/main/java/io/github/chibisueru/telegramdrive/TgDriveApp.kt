@@ -11,13 +11,20 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.gif.AnimatedImageDecoder
+import io.github.chibisueru.telegramdrive.backup.CameraBackup
 import io.github.chibisueru.telegramdrive.data.DriveRepository
 import io.github.chibisueru.telegramdrive.data.IndexSync
 import io.github.chibisueru.telegramdrive.data.SettingsStore
 import io.github.chibisueru.telegramdrive.data.db.AppDatabase
 import io.github.chibisueru.telegramdrive.player.TelegramDataSource
 import io.github.chibisueru.telegramdrive.telegram.Telegram
+import io.github.chibisueru.telegramdrive.security.AppLock
 import io.github.chibisueru.telegramdrive.telegram.TgFiles
+import io.github.chibisueru.telegramdrive.transfer.NetworkMonitor
+import io.github.chibisueru.telegramdrive.transfer.TransferManager
+import io.github.chibisueru.telegramdrive.transfer.TransferNotifications
+import io.github.chibisueru.telegramdrive.transfer.TransferQueue
+import io.github.chibisueru.telegramdrive.transfer.TransferRunner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -52,13 +59,19 @@ class AppContainer(val context: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settings = SettingsStore(context)
     val db: AppDatabase = Room.databaseBuilder(context, AppDatabase::class.java, "drive.db")
-        .fallbackToDestructiveMigration(dropAllTables = true) // the index is restored from Telegram
+        .addMigrations(AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
+        .fallbackToDestructiveMigration(dropAllTables = true) // only for very old builds; the index is restored from Telegram
         .build()
     val dao = db.dao()
+    val network = NetworkMonitor(context)
     val telegram = Telegram(context, scope)
     val files = TgFiles(telegram)
     val indexSync = IndexSync(context, scope, dao, telegram, files, settings)
-    val repository = DriveRepository(context, dao, files, settings, indexSync)
+    val transferRunner = TransferRunner(context, dao, files, settings, indexSync)
+    val transfers = TransferManager(context, scope, db.transfers(), transferRunner)
+    val transferQueue = TransferQueue(scope, transfers, transferRunner, settings, network, TransferNotifications(context))
+    val repository = DriveRepository(context, dao, files, settings, indexSync, transfers)
+    val appLock = AppLock(scope, settings)
 
     @get:OptIn(UnstableApi::class)
     val mediaDataSourceFactory: TelegramDataSource.Factory by lazy { TelegramDataSource.Factory(dao, telegram) }
@@ -68,7 +81,11 @@ class AppContainer(val context: Context) {
         // (also when WorkManager starts it for a background transfer).
         scope.launch {
             val s = settings.current()
-            if (s.isConfigured) telegram.resume(s.apiId, s.apiHash)
+            if (s.isConfigured) {
+                telegram.resume(s.apiId, s.apiHash)
+                CameraBackup.schedule(context, s)
+                runCatching { repository.purgeOldTrash() }
+            }
         }
     }
 }
