@@ -89,6 +89,7 @@ class SetupViewModel(private val c: AppContainer) : ViewModel() {
                 accountName = listOf(me.firstName, me.lastName).filter { it.isNotBlank() }.joinToString(" "),
             )
             c.dao.clearAll()
+            c.indexSync.forgetLocal()
             state.update { it.copy(status = if (existing != null) "Restoring your folders…" else "Finishing up…") }
             val restored = existing != null && runCatching { c.indexSync.restoreFromTelegram() }.getOrDefault(false)
             if (!restored) runCatching { c.indexSync.syncNow() }

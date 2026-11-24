@@ -98,6 +98,7 @@ class DriveRepository(
         val folderTree = folderIds.flatMap { descendantsOf(it, allFolders) }.distinct()
         val files = folderTree.chunked(500).flatMap { dao.filesInFolders(it) } +
             fileIds.mapNotNull { dao.file(it) }
+        indexSync.markPurged(folderTree + files.map { it.id })
         deleteFiles(files.distinctBy { it.id })
         folderTree.chunked(500).forEach { dao.deleteFolders(it) }
         indexSync.requestSync()

@@ -17,3 +17,4 @@
 *.aab
 *.jks
 *.keystore
+/desktop/build/

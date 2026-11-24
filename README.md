@@ -1,7 +1,8 @@
 # Telegram Drive
 
-An Android cloud-drive app (Material 3, Jetpack Compose) that stores your files in a private
-channel in your own Telegram account, so storage costs nothing.
+A cloud-drive app for **Android, Linux and Windows** (Material 3, Jetpack Compose / Compose
+for Desktop) that stores your files in a private channel in your own Telegram account, so
+storage costs nothing. Phones and computers signed in to the same account share one drive.
 
 - **Folders**: create, rename, move and delete folders and files, nested as deep as you like,
   with breadcrumbs, search, sorting and a list or grid view.
@@ -24,6 +25,29 @@ channel in your own Telegram account, so storage costs nothing.
 - Material You dynamic color, light/dark theme, edge-to-edge, predictive back.
 - Requires **Android 16 (API 36) or newer**.
 
+### Desktop app (Linux and Windows)
+
+The same drive on your computer, with the same folders, favorites and trash:
+
+- **Downloads**: `.deb` (Debian, Ubuntu, Mint…), `.rpm` (Fedora, openSUSE…),
+  `.pkg.tar.zst` (Arch, Manjaro…) and for Windows an `.msi` or `.exe` installer, on the
+  [releases page](https://github.com/Chibisueru/Telegram_Drive/releases). Java is bundled;
+  nothing else to install. 64-bit only. On Linux it needs glibc 2.34+ and OpenSSL 3
+  (Ubuntu 22.04+, Debian 12+, Fedora 35+, current Arch).
+- **Drag and drop** files or whole folders onto the window to upload them (folders keep their
+  structure). Or use **Upload → Files…/Folder…**.
+- Desktop-style selection: click, **Ctrl**-click, **Shift**-click, **Ctrl+A**; right-click for
+  the menu; **Enter** opens, **Delete** trashes, **F2** renames, **Backspace** goes up.
+- **Viewer**: images (zoom with the mouse wheel, **←/→** to step through the folder) and text
+  files open in the app. Videos, music, PDFs and other files are fetched once and opened in
+  your default app.
+- Downloads go to your Downloads folder (changeable in Settings).
+- Installing on Arch from the package file: `sudo pacman -U telegram-drive-*.pkg.tar.zst`.
+  On Debian/Ubuntu: `sudo apt install ./telegram-drive_*.deb`. On Fedora:
+  `sudo dnf install ./telegram-drive-*.rpm`.
+- Windows: the installers aren't code-signed, so SmartScreen warns on first run
+  (*More info → Run anyway*).
+
 ## Setup (once)
 
 1. Tap **Open my.telegram.org** in the app, log in there with your phone number, open
@@ -34,8 +58,9 @@ channel in your own Telegram account, so storage costs nothing.
 3. The app creates a private channel called "Telegram Drive" in your account. Your files go
    there.
 
-On another phone, do the same: the app finds your existing "Telegram Drive" channel and
-restores your folders.
+On another phone or a computer, do the same: the app finds your existing "Telegram Drive"
+channel and restores your folders. Each device needs its own login (an API ID/hash can be
+reused).
 
 ## Build
 
@@ -45,6 +70,20 @@ restores your folders.
 ```
 
 You need JDK 17+ and the Android SDK with platform 37 (`local.properties` → `sdk.dir`).
+
+Desktop app (`desktop/`):
+
+```bash
+./gradlew :desktop:run                          # run it
+./gradlew :desktop:packageDeb                   # or packageRpm / packageMsi / packageExe
+./gradlew :desktop:createDistributable          # app image, used for the Arch package
+./gradlew -PdesktopOnly=true :desktop:test      # without configuring the Android app
+```
+
+Packages can only be built for the OS you're on (Windows installers on Windows). Gradle
+downloads a Temurin JDK 21 for the bundled runtime. The GitHub Actions workflow
+`.github/workflows/desktop.yml` builds all of them; `packaging/arch/PKGBUILD` repackages the
+Linux app image for Arch.
 
 Signed release builds read the signing key from `local.properties`, which is never committed:
 
@@ -75,6 +114,7 @@ through [TDLib](https://github.com/tdlib/td), Telegram's official client library
 | Local index (Room): folders and which message holds which file | `data/db/` |
 | Index backup to the channel | `data/IndexSync.kt` |
 | Screens | `ui/setup`, `ui/browser`, `ui/transfers`, `ui/viewer`, `ui/settings`, `ui/security` |
+| Desktop app (same Telegram layer, index kept in a JSON file) | `desktop/` |
 
 **Files** are document messages in the drive channel, with a thumbnail for photos and videos.
 
@@ -82,6 +122,13 @@ through [TDLib](https://github.com/tdlib/td), Telegram's official client library
 change (debounced) the whole index goes up to the channel as `tgdrive_index.json`, and the
 channel's description is updated to point at it (`#tgdrive index:<message id>`). A new phone
 reads the description, downloads that message and rebuilds the folders.
+
+**Several devices**: when a device opens (and every minute on desktop) it checks whether the
+channel points at a newer index and adopts it. Before posting its own changes it merges in any
+newer index from another device: a three-way merge against the last index it posted or
+adopted, so whatever only one device changed is kept. Only when two devices changed the *same*
+item before syncing does the one saving last win. Items deleted for good are listed in the
+index (`purged`) so a merge can't bring them back.
 
 **Streaming**: when you play a video, TDLib starts downloading from the byte the player asks
 for. The player reads bytes as soon as they're on disk. Seeking restarts the download at the
@@ -104,7 +151,7 @@ channel and supports nested folders.
 - **Uploads need free space**: Android only hands out the file's content, not a path, so each
   file is copied into the app's cache before upload and deleted afterwards.
 - Don't post or delete messages in the storage channel by hand, and don't edit its description.
-- Editing on two phones at once isn't merged: the last phone to save its index wins. Use
-  *Settings → Restore from Telegram* to pull the latest copy.
+- If two devices change the *same* file or folder before either has synced, the device that
+  saves last wins for that item. Devices still on 1.0.x don't merge: update all of them.
 - This app isn't affiliated with Telegram. Telegram can rate-limit or restrict accounts that
   move very large amounts of data.

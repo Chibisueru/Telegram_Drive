@@ -35,6 +35,7 @@ import io.github.chibisueru.telegramdrive.ui.setup.SetupScreen
 import io.github.chibisueru.telegramdrive.ui.theme.TgDriveTheme
 import io.github.chibisueru.telegramdrive.ui.viewer.ViewerScreen
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
 
 /** A FragmentActivity because the system biometric prompt needs one. */
@@ -89,6 +90,8 @@ class MainActivity : FragmentActivity() {
         super.onStart()
         // Pick up uploads/downloads left over from earlier (the service can only start while visible).
         container.transfers.resumeIfPending()
+        // Pick up changes made on another device (another phone or the desktop app).
+        container.scope.launch { runCatching { container.indexSync.refreshIfChanged() } }
     }
 
     override fun onNewIntent(intent: Intent) {

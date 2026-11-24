@@ -151,6 +151,7 @@ class SettingsViewModel(private val c: AppContainer) : ViewModel() {
         c.telegram.logOut()
         c.settings.clearConnection()
         c.dao.clearAll()
+        c.indexSync.forgetLocal()
         onDone()
     }
 

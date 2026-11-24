@@ -1,0 +1,79 @@
+name: Desktop packages
+
+on:
+  push:
+    tags: ['v*']
+    paths:
+      - 'desktop/**'
+      - 'packaging/**'
+      - 'gradle/**'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
+
+jobs:
+  linux:
+    name: Linux (.deb, .rpm, app image)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y rpm fakeroot
+      - name: Build app image
+        run: ./gradlew -PdesktopOnly=true :desktop:test :desktop:createDistributable
+      - name: Build .deb and .rpm
+        run: |
+          version=$(grep '^app.versionName=' gradle.properties | cut -d= -f2)
+          packaging/linux/build-packages.sh desktop/build/compose/binaries/main/app/TelegramDrive "$version" out
+          tar -C desktop/build/compose/binaries/main/app -czf out/TelegramDrive-linux-x64.tar.gz TelegramDrive
+          ls -la out
+      - uses: actions/upload-artifact@v5
+        with: { name: linux, path: out/*, if-no-files-found: error }
+
+  arch:
+    name: Arch Linux (.pkg.tar.zst)
+    needs: linux
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v6
+        with: { name: linux, path: linux }
+      - name: makepkg
+        run: |
+          useradd -m builder
+          mkdir /build
+          cp packaging/arch/* linux/TelegramDrive-linux-x64.tar.gz /build/
+          sed -i "s/^pkgver=.*/pkgver=$(grep '^app.versionName=' gradle.properties | cut -d= -f2)/" /build/PKGBUILD
+          chown -R builder /build
+          su builder -c "cd /build && makepkg --nodeps --force"
+          mkdir out && cp /build/*.pkg.tar.zst out/ && ls -la out
+      - uses: actions/upload-artifact@v5
+        with: { name: arch, path: out/*, if-no-files-found: error }
+
+  windows:
+    name: Windows (.msi, .exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: '21' }
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Build installers
+        run: ./gradlew -PdesktopOnly=true :desktop:packageMsi :desktop:packageExe
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir out
+          cp desktop/build/compose/binaries/main/msi/*.msi out/
+          cp desktop/build/compose/binaries/main/exe/*.exe out/
+          ls -la out
+      - uses: actions/upload-artifact@v5
+        with: { name: windows, path: out/*, if-no-files-found: error }
