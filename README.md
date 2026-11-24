@@ -46,6 +46,17 @@ restores your folders.
 
 You need JDK 17+ and the Android SDK with platform 37 (`local.properties` → `sdk.dir`).
 
+Signed release builds read the signing key from `local.properties`, which is never committed:
+
+```properties
+release.storeFile=/path/to/your-release.jks
+release.storePassword=...
+release.keyAlias=...
+release.keyPassword=...
+```
+
+Then run `./gradlew assembleRelease`. Without these lines the release APK is left unsigned.
+
 ## How it works
 
 The app is a Telegram client for one purpose. It talks to Telegram directly over MTProto
