@@ -8,7 +8,9 @@ import io.github.chibisueru.telegramdrive.data.SortMode
 import io.github.chibisueru.telegramdrive.data.ViewMode
 import io.github.chibisueru.telegramdrive.data.db.FileEntity
 import io.github.chibisueru.telegramdrive.data.db.FolderEntity
-import io.github.chibisueru.telegramdrive.util.extensionOf
+import io.github.chibisueru.telegramdrive.data.folderSortKey
+import io.github.chibisueru.telegramdrive.data.sortFiles
+import io.github.chibisueru.telegramdrive.data.sortFolders
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.channels.Channel
@@ -82,9 +84,21 @@ class BrowserViewModel(private val c: AppContainer) : ViewModel() {
 
     private data class Params(val folder: String?, val special: Special?, val query: String, val sort: SortMode)
 
+    /** Each folder (and Favorites, Trash, search) remembers its own sort order. */
+    val sortKey: StateFlow<String> = combine(currentFolderId, special, searchActive) { folder, sp, searching ->
+        when {
+            searching -> "special:SEARCH"
+            sp != null -> "special:${sp.name}"
+            else -> folderSortKey(folder)
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, folderSortKey(null))
+
+    val currentSort: StateFlow<SortMode> = combine(sortKey, c.settings.flow) { key, s -> s.sortFor(key) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SortMode.NAME)
+
     val items: StateFlow<List<DriveItem>?> = combine(
         combine(currentFolderId, special) { f, s -> f to s },
-        query.debounce(200), searchActive, c.settings.flow.map { it.sortMode },
+        query.debounce(200), searchActive, currentSort,
     ) { (folder, sp), q, searching, sort -> Params(folder, sp, if (searching) q.trim() else "", sort) }
         .flatMapLatest { p -> source(p) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -100,23 +114,8 @@ class BrowserViewModel(private val c: AppContainer) : ViewModel() {
         else -> combine(c.dao.foldersIn(p.folder), c.dao.filesIn(p.folder)) { fo, fi -> sort(fo, fi, p.sort) }
     }
 
-    private fun sort(folders: List<FolderEntity>, files: List<FileEntity>, mode: SortMode): List<DriveItem> {
-        val byName = compareBy<String, String>(String.CASE_INSENSITIVE_ORDER) { it }
-        val sortedFolders = when (mode) {
-            SortMode.NEWEST -> folders.sortedByDescending { it.createdAt }
-            SortMode.OLDEST -> folders.sortedBy { it.createdAt }
-            else -> folders.sortedWith(compareBy(byName) { it.name })
-        }
-        val sortedFiles = when (mode) {
-            SortMode.NAME -> files.sortedWith(compareBy(byName) { it.name })
-            SortMode.NEWEST -> files.sortedByDescending { it.createdAt }
-            SortMode.OLDEST -> files.sortedBy { it.createdAt }
-            SortMode.LARGEST -> files.sortedByDescending { it.size }
-            SortMode.SMALLEST -> files.sortedBy { it.size }
-            SortMode.TYPE -> files.sortedWith(compareBy<FileEntity, String>(byName) { extensionOf(it.name) }.thenBy(byName) { it.name })
-        }
-        return sortedFolders.map { DriveItem.Folder(it) } + sortedFiles.map { DriveItem.File(it) }
-    }
+    private fun sort(folders: List<FolderEntity>, files: List<FileEntity>, mode: SortMode): List<DriveItem> =
+        sortFolders(folders, mode).map { DriveItem.Folder(it) } + sortFiles(files, mode).map { DriveItem.File(it) }
 
     // ---- Navigation ----
 
@@ -145,7 +144,8 @@ class BrowserViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun setViewMode(mode: ViewMode) = viewModelScope.launch { c.settings.setViewMode(mode) }
-    fun setSort(mode: SortMode) = viewModelScope.launch { c.settings.setSortMode(mode) }
+    /** Sets the sort order of the folder (or view) that is open right now. */
+    fun setSort(mode: SortMode) = viewModelScope.launch { c.settings.setFolderSort(sortKey.value, mode) }
 
     // ---- Selection ----
 

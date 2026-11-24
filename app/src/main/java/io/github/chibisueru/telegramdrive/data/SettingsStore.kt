@@ -11,6 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import org.json.JSONObject
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
@@ -33,7 +34,10 @@ data class AppSettings(
     /** 0 = follow system, 1 = light, 2 = dark */
     val themeMode: Int = 0,
     val viewMode: ViewMode = ViewMode.LIST,
+    /** Sort order for folders that haven't been given their own. */
     val sortMode: SortMode = SortMode.NAME,
+    /** Per-folder sort orders, keyed by [folderSortKey] (or "special:…" for Favorites etc.). */
+    val folderSorts: Map<String, SortMode> = emptyMap(),
     /** Uploads and downloads only run on Wi-Fi (or Ethernet). */
     val wifiOnly: Boolean = false,
     /** PBKDF2 hash of the app PIN; empty when no PIN is set. */
@@ -55,6 +59,7 @@ data class AppSettings(
 ) {
     val isConfigured: Boolean get() = apiId != 0 && apiHash.isNotBlank() && chatId != 0L
     val pinEnabled: Boolean get() = pinHash.isNotEmpty()
+    fun sortFor(key: String): SortMode = folderSorts[key] ?: sortMode
 }
 
 class SettingsStore(private val context: Context) {
@@ -80,6 +85,7 @@ class SettingsStore(private val context: Context) {
         val cameraLastMediaId = longPreferencesKey("camera_last_media_id")
         val cameraFolderId = stringPreferencesKey("camera_folder_id")
         val sortMode = stringPreferencesKey("sort_mode")
+        val folderSorts = stringPreferencesKey("folder_sorts")
         val indexMessageId = longPreferencesKey("index_message_id")
         val lastSyncAt = longPreferencesKey("last_sync_at")
     }
@@ -110,6 +116,7 @@ class SettingsStore(private val context: Context) {
         cameraLastMediaId = this[Keys.cameraLastMediaId] ?: 0,
         cameraFolderId = this[Keys.cameraFolderId].orEmpty(),
         sortMode = this[Keys.sortMode]?.let { runCatching { SortMode.valueOf(it) }.getOrNull() } ?: SortMode.NAME,
+        folderSorts = parseFolderSorts(this[Keys.folderSorts]),
         indexMessageId = this[Keys.indexMessageId] ?: 0,
         lastSyncAt = this[Keys.lastSyncAt] ?: 0,
     )
@@ -164,6 +171,23 @@ class SettingsStore(private val context: Context) {
         it[Keys.biometricUnlock] = false
     }
     suspend fun setSortMode(v: SortMode) = context.dataStore.edit { it[Keys.sortMode] = v.name }
+
+    /** Remembers the sort order chosen for one folder (or view). */
+    suspend fun setFolderSort(key: String, mode: SortMode) = context.dataStore.edit { prefs ->
+        val map = parseFolderSorts(prefs[Keys.folderSorts]).toMutableMap()
+        map[key] = mode
+        prefs[Keys.folderSorts] = JSONObject().apply { map.forEach { (k, v) -> put(k, v.name) } }.toString()
+    }
+
+    private fun parseFolderSorts(raw: String?): Map<String, SortMode> {
+        if (raw.isNullOrEmpty()) return emptyMap()
+        return runCatching {
+            val o = JSONObject(raw)
+            o.keys().asSequence().mapNotNull { k ->
+                runCatching { SortMode.valueOf(o.getString(k)) }.getOrNull()?.let { k to it }
+            }.toMap()
+        }.getOrDefault(emptyMap())
+    }
     suspend fun setIndexSynced(messageId: Long, at: Long) = context.dataStore.edit {
         it[Keys.indexMessageId] = messageId
         it[Keys.lastSyncAt] = at

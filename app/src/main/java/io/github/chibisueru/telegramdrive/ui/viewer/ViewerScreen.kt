@@ -96,6 +96,10 @@ fun ViewerScreen(fileId: String, onBack: () -> Unit) {
     }
     val kind = kindOf(entity.mimeType, entity.name)
     val dark = kind == FileKind.VIDEO || kind == FileKind.IMAGE
+    // Images can be swiped through; the bar and its actions follow the image on screen.
+    val gallery by vm.gallery.collectAsStateWithLifecycle()
+    var pageId by rememberSaveable { mutableStateOf(fileId) }
+    val shown = if (kind == FileKind.IMAGE) gallery?.firstOrNull { it.id == pageId } ?: entity else entity
 
     FullscreenEffect(fullscreen)
 
@@ -105,13 +109,24 @@ fun ViewerScreen(fileId: String, onBack: () -> Unit) {
         topBar = {
             if (!fullscreen) {
                 TopAppBar(
-                    title = { Text(entity.name, maxLines = 1, overflow = TextOverflow.MiddleEllipsis) },
+                    title = {
+                        Column {
+                            Text(shown.name, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
+                            val list = gallery
+                            if (kind == FileKind.IMAGE && list != null && list.size > 1) {
+                                Text(
+                                    "${list.indexOfFirst { it.id == shown.id } + 1} of ${list.size}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                    },
                     navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                     actions = {
-                        IconButton(onClick = { vm.ensureCached { share(context, entity, it) } }) {
+                        IconButton(onClick = { vm.withLocalFile(shown) { share(context, shown, it) } }) {
                             Icon(Icons.Default.Share, "Share")
                         }
-                        IconButton(onClick = { vm.download() }) { Icon(Icons.Default.Download, "Download") }
+                        IconButton(onClick = { vm.download(shown) }) { Icon(Icons.Default.Download, "Download") }
                         IconButton(onClick = { showInfo = true }) { Icon(Icons.Default.Info, "Details") }
                     },
                     colors = if (dark) TopAppBarDefaults.topAppBarColors(
@@ -127,7 +142,18 @@ fun ViewerScreen(fileId: String, onBack: () -> Unit) {
         Box(Modifier.fillMaxSize().padding(if (fullscreen) androidx.compose.foundation.layout.PaddingValues() else padding)) {
             when (kind) {
                 FileKind.VIDEO, FileKind.AUDIO -> MediaPlayer(vm, entity, kind == FileKind.AUDIO, fullscreen) { fullscreen = it }
-                FileKind.IMAGE -> NeedsCache(vm, cache, dark = true) { ZoomableImage(it) }
+                FileKind.IMAGE -> {
+                    val list = gallery
+                    if (list == null) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    } else {
+                        ImagePager(
+                            images = list.ifEmpty { listOf(entity) },
+                            initialId = pageId,
+                            onPageChanged = { f -> pageId = f.id; vm.markOpened(f.id) },
+                        )
+                    }
+                }
                 FileKind.PDF -> NeedsCache(vm, cache) { PdfViewer(it) }
                 FileKind.TEXT -> if (entity.size <= TEXT_PREVIEW_LIMIT) {
                     NeedsCache(vm, cache) { TextViewer(it) }
@@ -146,10 +172,10 @@ fun ViewerScreen(fileId: String, onBack: () -> Unit) {
             title = { Text("Details") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Name: ${entity.name}")
-                    Text("Type: ${entity.mimeType}")
-                    Text("Size: ${formatSize(entity.size)}")
-                    Text("Uploaded: ${formatDate(entity.createdAt)}")
+                    Text("Name: ${shown.name}")
+                    Text("Type: ${shown.mimeType}")
+                    Text("Size: ${formatSize(shown.size)}")
+                    Text("Uploaded: ${formatDate(shown.createdAt)}")
                 }
             },
             confirmButton = { TextButton(onClick = { showInfo = false }) { Text("Close") } },

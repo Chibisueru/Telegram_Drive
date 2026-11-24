@@ -131,6 +131,7 @@ fun BrowserScreen(onOpenFile: (String) -> Unit) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val allFolders by vm.allFolders.collectAsStateWithLifecycle()
     val selection by vm.selection.collectAsStateWithLifecycle()
+    val currentSort by vm.currentSort.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
@@ -267,10 +268,16 @@ fun BrowserScreen(onOpenFile: (String) -> Unit) {
                                 Box {
                                     IconButton(onClick = { showSortMenu = true }) { Icon(Icons.AutoMirrored.Filled.Sort, "Sort") }
                                     DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
+                                        Text(
+                                            if (special == null && !searching) "Sort this folder" else "Sort this view",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        )
                                         SortMode.entries.forEach { mode ->
                                             DropdownMenuItem(
                                                 text = { Text(mode.label()) },
-                                                trailingIcon = { if (settings?.sortMode == mode) Icon(Icons.Default.Check, null) },
+                                                trailingIcon = { if (currentSort == mode) Icon(Icons.Default.Check, null) },
                                                 onClick = { vm.setSort(mode); showSortMenu = false },
                                             )
                                         }
