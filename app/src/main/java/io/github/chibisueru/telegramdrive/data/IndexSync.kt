@@ -1,12 +1,16 @@
 package io.github.chibisueru.telegramdrive.data
 
-import io.github.chibisueru.telegramdrive.data.db.ChunkEntity
+import android.content.Context
+import dev.g000sha256.tdl.dto.MessageDocument
 import io.github.chibisueru.telegramdrive.data.db.DriveDao
 import io.github.chibisueru.telegramdrive.data.db.FileEntity
 import io.github.chibisueru.telegramdrive.data.db.FolderEntity
-import io.github.chibisueru.telegramdrive.telegram.BotApi
-import io.github.chibisueru.telegramdrive.telegram.TelegramFiles
+import io.github.chibisueru.telegramdrive.telegram.DriveProvisioner
+import io.github.chibisueru.telegramdrive.telegram.Telegram
+import io.github.chibisueru.telegramdrive.telegram.TgFiles
+import io.github.chibisueru.telegramdrive.telegram.get
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -16,9 +20,10 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
+import java.io.File
 
 sealed interface SyncState {
     data object Idle : SyncState
@@ -27,21 +32,23 @@ sealed interface SyncState {
 }
 
 /**
- * The folder tree and the chunk map live in a local Room database. To make the drive survive
- * reinstalls and work on other devices, the whole index is uploaded as a JSON document to the
- * channel and pinned there. On sign-in, the pinned index is downloaded and restored.
+ * Telegram has no folders, so the folder tree (and which message holds which file) lives in a
+ * local Room database. After every change, the whole index is posted to the drive channel as a
+ * JSON document, and the channel description points at it. Signing in on another phone restores
+ * it from there.
  */
 @OptIn(FlowPreview::class)
 class IndexSync(
+    private val context: Context,
     private val scope: CoroutineScope,
     private val dao: DriveDao,
-    private val bot: BotApi,
-    private val files: TelegramFiles,
+    private val telegram: Telegram,
+    private val files: TgFiles,
     private val settings: SettingsStore,
 ) {
     companion object {
         const val INDEX_FILE_NAME = "tgdrive_index.json"
-        private const val FORMAT_VERSION = 1
+        private const val FORMAT_VERSION = 2
     }
 
     private val mutex = Mutex()
@@ -65,13 +72,20 @@ class IndexSync(
         if (!s.isConfigured) return@withLock
         _state.value = SyncState.Syncing
         try {
-            val bytes = export().toString().toByteArray()
-            val sent = bot.sendDocument(
-                s.chatId, INDEX_FILE_NAME, bytes, bytes.size,
-                caption = "Telegram Drive index — keep this message pinned and don't delete it.",
+            val file = withContext(Dispatchers.IO) {
+                File(context.cacheDir, "index").apply { mkdirs() }.resolve(INDEX_FILE_NAME).apply {
+                    writeText(export().toString())
+                }
+            }
+            val sent = files.sendDocument(
+                s.chatId, file.absolutePath,
+                caption = "Telegram Drive index. Don't delete this message.",
             )
-            runCatching { bot.pinChatMessage(s.chatId, sent.messageId) }
-            if (s.indexMessageId != 0L) bot.deleteMessages(s.chatId, listOf(s.indexMessageId))
+            // Point the channel description at the new index. Unlike pinning, editing the
+            // description doesn't post a service message into the channel.
+            val client = telegram.awaitReady()
+            client.setChatDescription(s.chatId, DriveProvisioner.describe(indexMessageId = sent.messageId)).get()
+            if (s.indexMessageId != 0L) files.deleteMessages(s.chatId, listOf(s.indexMessageId))
             settings.setIndexSynced(sent.messageId, System.currentTimeMillis())
             _state.value = SyncState.Idle
         } catch (e: Exception) {
@@ -81,55 +95,47 @@ class IndexSync(
     }
 
     /**
-     * Replaces the local index with the one pinned in the channel.
-     * Returns false when the channel has no pinned index (a fresh drive).
+     * Replaces the local index with the latest one saved in the channel.
+     * Returns false when the channel has no index yet (a fresh drive).
      */
     suspend fun restoreFromTelegram(): Boolean = mutex.withLock {
         val s = settings.current()
-        val pinned = bot.getChat(s.chatId).optJSONObject("pinned_message") ?: return@withLock false
-        val doc = pinned.optJSONObject("document") ?: return@withLock false
-        if (doc.optString("file_name") != INDEX_FILE_NAME) return@withLock false
-        val url = files.urlFor(doc.getString("file_id"))
-        val out = ByteArrayOutputStream()
-        files.openChunk(url, 0).use { it.copyTo(out) }
-        import(JSONObject(out.toString(Charsets.UTF_8.name())))
-        settings.setIndexSynced(pinned.getLong("message_id"), System.currentTimeMillis())
+        val client = telegram.awaitReady()
+        val messageId = DriveProvisioner.indexMessageId(client, s.chatId) ?: return@withLock false
+        val message = runCatching { client.getMessage(s.chatId, messageId).get() }.getOrNull() ?: return@withLock false
+        val doc = (message.content as? MessageDocument)?.document ?: return@withLock false
+        if (doc.fileName != INDEX_FILE_NAME) return@withLock false
+        val local = files.download(doc.document.remote.id, priority = 32)
+        val json = withContext(Dispatchers.IO) { JSONObject(local.readText()) }
+        if (json.optInt("version") != FORMAT_VERSION) return@withLock false
+        import(json)
+        settings.setIndexSynced(messageId, System.currentTimeMillis())
         true
     }
 
-    private suspend fun export(): JSONObject {
-        val chunksByFile = dao.allChunks().groupBy { it.fileId }
-        return JSONObject()
-            .put("version", FORMAT_VERSION)
-            .put("exportedAt", System.currentTimeMillis())
-            .put("folders", JSONArray().apply {
-                dao.allFolders().forEach { f ->
-                    put(JSONObject().put("id", f.id).put("parentId", f.parentId ?: JSONObject.NULL)
-                        .put("name", f.name).put("createdAt", f.createdAt))
-                }
-            })
-            .put("files", JSONArray().apply {
-                dao.allFiles().forEach { f ->
-                    put(JSONObject()
-                        .put("id", f.id).put("folderId", f.folderId ?: JSONObject.NULL)
-                        .put("name", f.name).put("mimeType", f.mimeType).put("size", f.size)
-                        .put("createdAt", f.createdAt).put("chunkSize", f.chunkSize)
-                        .put("thumbFileId", f.thumbFileId ?: JSONObject.NULL)
-                        .put("thumbMessageId", f.thumbMessageId ?: JSONObject.NULL)
-                        .put("chunks", JSONArray().apply {
-                            chunksByFile[f.id].orEmpty().forEach { c ->
-                                put(JSONObject().put("idx", c.idx).put("fileId", c.tgFileId)
-                                    .put("messageId", c.messageId).put("size", c.size))
-                            }
-                        }))
-                }
-            })
-    }
+    private suspend fun export(): JSONObject = JSONObject()
+        .put("version", FORMAT_VERSION)
+        .put("exportedAt", System.currentTimeMillis())
+        .put("folders", JSONArray().apply {
+            dao.allFolders().forEach { f ->
+                put(JSONObject().put("id", f.id).put("parentId", f.parentId ?: JSONObject.NULL)
+                    .put("name", f.name).put("createdAt", f.createdAt))
+            }
+        })
+        .put("files", JSONArray().apply {
+            dao.allFiles().forEach { f ->
+                put(JSONObject()
+                    .put("id", f.id).put("folderId", f.folderId ?: JSONObject.NULL)
+                    .put("name", f.name).put("mimeType", f.mimeType).put("size", f.size)
+                    .put("createdAt", f.createdAt).put("messageId", f.messageId)
+                    .put("remoteId", f.remoteId)
+                    .put("thumbRemoteId", f.thumbRemoteId ?: JSONObject.NULL))
+            }
+        })
 
     private suspend fun import(json: JSONObject) {
         val folders = mutableListOf<FolderEntity>()
         val fileRows = mutableListOf<FileEntity>()
-        val chunks = mutableListOf<ChunkEntity>()
         json.optJSONArray("folders")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
@@ -139,27 +145,20 @@ class IndexSync(
         json.optJSONArray("files")?.let { arr ->
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
-                val id = o.getString("id")
                 fileRows += FileEntity(
-                    id = id,
+                    id = o.getString("id"),
                     folderId = o.optStringOrNull("folderId"),
                     name = o.getString("name"),
                     mimeType = o.optString("mimeType", "application/octet-stream"),
                     size = o.getLong("size"),
                     createdAt = o.optLong("createdAt"),
-                    chunkSize = o.optLong("chunkSize", BotApi.CHUNK_SIZE.toLong()),
-                    thumbFileId = o.optStringOrNull("thumbFileId"),
-                    thumbMessageId = if (o.isNull("thumbMessageId")) null else o.optLong("thumbMessageId"),
+                    messageId = o.getLong("messageId"),
+                    remoteId = o.getString("remoteId"),
+                    thumbRemoteId = o.optStringOrNull("thumbRemoteId"),
                 )
-                o.optJSONArray("chunks")?.let { ca ->
-                    for (j in 0 until ca.length()) {
-                        val c = ca.getJSONObject(j)
-                        chunks += ChunkEntity(id, c.getInt("idx"), c.getString("fileId"), c.getLong("messageId"), c.getLong("size"))
-                    }
-                }
             }
         }
-        dao.replaceAll(folders, fileRows, chunks)
+        dao.replaceAll(folders, fileRows)
     }
 
     private fun JSONObject.optStringOrNull(key: String): String? =

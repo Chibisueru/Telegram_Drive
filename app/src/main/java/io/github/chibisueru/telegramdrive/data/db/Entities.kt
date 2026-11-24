@@ -13,7 +13,7 @@ data class FolderEntity(
     val createdAt: Long,
 )
 
-/** A file. Its bytes live in Telegram as one or more [ChunkEntity] documents. */
+/** A file: one document message in the drive channel. */
 @Entity(tableName = "files", indices = [Index("folderId")])
 data class FileEntity(
     @PrimaryKey val id: String,
@@ -22,18 +22,9 @@ data class FileEntity(
     val mimeType: String,
     val size: Long,
     val createdAt: Long,
-    /** Size of every chunk except possibly the last one. */
-    val chunkSize: Long,
-    val thumbFileId: String? = null,
-    val thumbMessageId: Long? = null,
-)
-
-/** One Telegram document holding bytes [idx * chunkSize, idx * chunkSize + size) of a file. */
-@Entity(tableName = "chunks", primaryKeys = ["fileId", "idx"])
-data class ChunkEntity(
-    val fileId: String,
-    val idx: Int,
-    val tgFileId: String,
+    /** The message holding the file in the drive channel. */
     val messageId: Long,
-    val size: Long,
+    /** TDLib's persistent remote file ID (valid for this Telegram account on any device). */
+    val remoteId: String,
+    val thumbRemoteId: String? = null,
 )

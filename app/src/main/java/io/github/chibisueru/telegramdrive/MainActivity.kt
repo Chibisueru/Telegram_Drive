@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -24,6 +25,7 @@ import io.github.chibisueru.telegramdrive.ui.settings.SettingsScreen
 import io.github.chibisueru.telegramdrive.ui.setup.SetupScreen
 import io.github.chibisueru.telegramdrive.ui.theme.TgDriveTheme
 import io.github.chibisueru.telegramdrive.ui.viewer.ViewerScreen
+import kotlinx.coroutines.flow.StateFlow
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,7 +37,7 @@ class MainActivity : ComponentActivity() {
             val s = settings ?: return@setContent
             TgDriveTheme(themeMode = s.themeMode, dynamicColor = s.dynamicColor) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    AppNav(startConfigured = s.isConfigured)
+                    AppNav(startConfigured = s.isConfigured, sessionLost = container.telegram.sessionLost)
                 }
             }
         }
@@ -43,9 +45,16 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AppNav(startConfigured: Boolean) {
+private fun AppNav(startConfigured: Boolean, sessionLost: StateFlow<Boolean>) {
     val nav = rememberNavController()
     val start = remember { if (startConfigured) "browser" else "setup" }
+    val lost by sessionLost.collectAsStateWithLifecycle()
+    LaunchedEffect(lost) {
+        // The saved session was ended (e.g. from Telegram's "Active sessions"): log in again.
+        if (lost && nav.currentDestination?.route != "setup") {
+            nav.navigate("setup") { popUpTo(0) { inclusive = true } }
+        }
+    }
     NavHost(
         navController = nav,
         startDestination = start,

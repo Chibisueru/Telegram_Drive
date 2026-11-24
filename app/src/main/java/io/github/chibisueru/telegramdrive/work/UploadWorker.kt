@@ -3,32 +3,34 @@ package io.github.chibisueru.telegramdrive.work
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
 import android.util.Size
 import androidx.core.net.toUri
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import dev.g000sha256.tdl.dto.InputFileLocal
+import dev.g000sha256.tdl.dto.InputThumbnail
 import io.github.chibisueru.telegramdrive.container
-import io.github.chibisueru.telegramdrive.data.db.ChunkEntity
 import io.github.chibisueru.telegramdrive.data.db.FileEntity
-import io.github.chibisueru.telegramdrive.telegram.BotApi
+import io.github.chibisueru.telegramdrive.util.safeFileName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
-import java.io.InputStream
+import java.io.File
 import java.util.UUID
 
 /**
- * Uploads one picked file: splits it into [BotApi.CHUNK_SIZE] pieces, posts each as a
- * document to the storage channel, uploads a small thumbnail for photos/videos, then records
- * the file in the index.
+ * Uploads one picked file as a single document message in the drive channel (up to 2 GB,
+ * 4 GB with Premium), with a thumbnail for photos and videos, then records it in the index.
  *
+ * TDLib uploads from a file path, so the picked file is first copied into the app's cache.
  * Failures are reported through output data with Result.success, so a failed file does not
  * cancel the uploads queued after it.
  */
@@ -44,13 +46,9 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         val mime = inputData.getString(TransferKeys.MIME) ?: "application/octet-stream"
         val declaredSize = inputData.getLong(TransferKeys.SIZE, -1)
         val notificationId = id.hashCode()
+        val stagingDir = File(applicationContext.cacheDir, "upload/${UUID.randomUUID()}")
 
-        runCatching { setForeground(transferForegroundInfo(applicationContext, notificationId, "Uploading", name, 0f)) }
-
-        val chatId = c.settings.current().chatId
-        val fileId = UUID.randomUUID().toString()
-        val uploaded = mutableListOf<ChunkEntity>()
-        var thumbMessage: Long? = null
+        runCatching { setForeground(transferForegroundInfo(applicationContext, notificationId, "Uploading", name, null)) }
 
         return try {
             coroutineScope {
@@ -61,85 +59,70 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                         delay(700)
                     }
                 }
-                var total = 0L
-                withContext(Dispatchers.IO) {
-                    applicationContext.contentResolver.openInputStream(uri)?.use { input ->
-                        val buffer = ByteArray(BotApi.CHUNK_SIZE)
-                        var idx = 0
-                        while (true) {
-                            val n = readFully(input, buffer)
-                            if (n <= 0) break
-                            val base = total
-                            val sent = c.bot.sendDocument(chatId, "$fileId.part$idx", buffer, n) { done ->
-                                if (declaredSize > 0) progress = ((base + done).toFloat() / declaredSize).coerceAtMost(0.99f)
-                            }
-                            uploaded += ChunkEntity(fileId, idx, sent.fileId, sent.messageId, n.toLong())
-                            total += n
-                            idx++
-                            if (n < buffer.size) break
-                        }
-                    } ?: error("Can't open $name")
-                }
-                if (total == 0L) error("$name is empty")
+                val chatId = c.settings.current().chatId
+                val staged = stage(uri, File(stagingDir, safeFileName(name)), declaredSize)
+                if (staged.length() == 0L) error("$name is empty")
+                val thumb = makeThumbnail(uri, mime, File(stagingDir, "thumb.jpg"))
 
-                val thumb = makeThumbnail(uri, mime)
-                val thumbSent = thumb?.let {
-                    runCatching { c.bot.sendDocument(chatId, "$fileId.thumb.jpg", it, it.size) }.getOrNull()
-                }
-                thumbMessage = thumbSent?.messageId
-                if (thumb != null && thumbSent != null) {
-                    withContext(Dispatchers.IO) {
-                        c.files.thumbFile(fileId).apply { parentFile?.mkdirs() }.writeBytes(thumb)
-                    }
-                }
+                val stored = c.files.sendDocument(
+                    chatId = chatId,
+                    path = staged.absolutePath,
+                    caption = name,
+                    thumbnail = thumb,
+                ) { p -> progress = 0.05f + 0.95f * p }
 
-                c.dao.insertFileWithChunks(
+                c.dao.insertFile(
                     FileEntity(
-                        id = fileId, folderId = folderId, name = name, mimeType = mime, size = total,
-                        createdAt = System.currentTimeMillis(), chunkSize = BotApi.CHUNK_SIZE.toLong(),
-                        thumbFileId = thumbSent?.fileId, thumbMessageId = thumbSent?.messageId,
-                    ),
-                    uploaded,
+                        id = UUID.randomUUID().toString(), folderId = folderId, name = name, mimeType = mime,
+                        size = staged.length(), createdAt = System.currentTimeMillis(),
+                        messageId = stored.messageId, remoteId = stored.remoteId, thumbRemoteId = stored.thumbRemoteId,
+                    )
                 )
                 c.indexSync.requestSync()
                 reporter.cancel()
             }
             Result.success(workDataOf(TransferKeys.NAME to name, TransferKeys.PROGRESS to 1f))
         } catch (e: CancellationException) {
-            cleanup(chatId, uploaded, thumbMessage)
             throw e
         } catch (e: Exception) {
-            cleanup(chatId, uploaded, thumbMessage)
             Result.success(workDataOf(TransferKeys.NAME to name, TransferKeys.ERROR to (e.message ?: e.javaClass.simpleName)))
         } finally {
+            stagingDir.deleteRecursively()
             runCatching {
                 applicationContext.contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
         }
     }
 
-    private suspend fun cleanup(chatId: String, uploaded: List<ChunkEntity>, thumbMessage: Long?) =
-        withContext(NonCancellable) {
-            val ids = uploaded.map { it.messageId } + listOfNotNull(thumbMessage)
-            if (ids.isNotEmpty()) runCatching { applicationContext.container.bot.deleteMessages(chatId, ids) }
+    /** Copies the picked file into the cache; this is the first 5 % of the progress bar. */
+    private suspend fun stage(uri: Uri, dest: File, declaredSize: Long): File = withContext(Dispatchers.IO) {
+        dest.parentFile?.mkdirs()
+        val input = applicationContext.contentResolver.openInputStream(uri) ?: error("Can't open the file")
+        input.use { inp ->
+            dest.outputStream().use { out ->
+                val buffer = ByteArray(256 * 1024)
+                var copied = 0L
+                while (true) {
+                    val n = inp.read(buffer)
+                    if (n == -1) break
+                    out.write(buffer, 0, n)
+                    copied += n
+                    if (declaredSize > 0) progress = 0.05f * copied / declaredSize
+                    currentCoroutineContext().ensureActive()
+                }
+            }
         }
-
-    private fun readFully(input: InputStream, buffer: ByteArray): Int {
-        var read = 0
-        while (read < buffer.size) {
-            val n = input.read(buffer, read, buffer.size - read)
-            if (n == -1) break
-            read += n
-        }
-        return read
+        dest
     }
 
-    private suspend fun makeThumbnail(uri: android.net.Uri, mime: String): ByteArray? {
+    private suspend fun makeThumbnail(uri: Uri, mime: String, dest: File): InputThumbnail? {
         if (!mime.startsWith("image/") && !mime.startsWith("video/")) return null
         return withContext(Dispatchers.IO) {
             runCatching {
+                // Telegram wants JPEG thumbnails of at most 320 px per side.
                 val bitmap = applicationContext.contentResolver.loadThumbnail(uri, Size(320, 320), null)
-                ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, 80, it) }.toByteArray()
+                dest.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+                InputThumbnail(InputFileLocal(dest.absolutePath), bitmap.width, bitmap.height)
             }.getOrNull()
         }
     }

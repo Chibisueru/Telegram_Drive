@@ -16,7 +16,7 @@ import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -80,27 +80,21 @@ class SettingsViewModel(private val c: AppContainer) : ViewModel() {
     fun syncNow() = run("Index saved to Telegram") { c.indexSync.syncNow() }
 
     fun restore() = run("Drive restored from Telegram") {
-        if (!c.indexSync.restoreFromTelegram()) error("No pinned index found in the channel")
+        if (!c.indexSync.restoreFromTelegram()) error("No saved index found in the channel")
     }
 
     fun clearCache() = run("Cache cleared") {
-        withContext(Dispatchers.IO) {
-            c.files.clearViewCache()
-            c.files.clearThumbnails()
-            c.mediaCache.keys.toList().forEach { c.mediaCache.removeResource(it) }
-        }
+        c.files.clearCache()
+        withContext(Dispatchers.IO) { java.io.File(c.context.cacheDir, "upload").deleteRecursively() }
     }
 
-    /** Saves the index first so nothing is lost, then forgets the bot and clears local data. */
+    /** Saves the index first so nothing is lost, then signs out of Telegram on this phone. */
     fun signOut(onDone: () -> Unit) = run(null) {
         c.indexSync.syncNow()
         c.repository.cancelAllTransfers()
+        c.telegram.logOut()
         c.settings.clearConnection()
         c.dao.clearAll()
-        withContext(Dispatchers.IO) {
-            c.files.clearViewCache()
-            c.files.clearThumbnails()
-        }
         onDone()
     }
 
@@ -156,12 +150,12 @@ fun SettingsScreen(onBack: () -> Unit, onSignedOut: () -> Unit) {
             ListItem(
                 leadingContent = { Icon(Icons.Default.Storage, null) },
                 headlineContent = { Text("${formatSize(total)} used") },
-                supportingContent = { Text("$count file${if (count == 1) "" else "s"} · no storage limit") },
+                supportingContent = { Text("$count file${if (count == 1) "" else "s"} · up to 2 GB per file (4 GB with Premium)") },
             )
             ListItem(
-                leadingContent = { Icon(Icons.Default.SmartToy, null) },
-                headlineContent = { Text(settings.chatTitle.ifBlank { "Storage channel" }) },
-                supportingContent = { Text("Bot @${settings.botName} · ${settings.chatId}") },
+                leadingContent = { Icon(Icons.Default.AccountCircle, null) },
+                headlineContent = { Text(settings.accountName.ifBlank { "Telegram account" }) },
+                supportingContent = { Text("Files are stored in your channel “${settings.chatTitle.ifBlank { "Telegram Drive" }}”") },
             )
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -197,7 +191,7 @@ fun SettingsScreen(onBack: () -> Unit, onSignedOut: () -> Unit) {
                             is SyncState.Failed -> "Last save failed: ${st.message}"
                             SyncState.Idle -> if (settings.lastSyncAt > 0) {
                                 "Last saved " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(settings.lastSyncAt))
-                            } else "The folder structure is pinned in your channel"
+                            } else "The folder structure is saved in your channel"
                         },
                         color = if (sync is SyncState.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -207,21 +201,21 @@ fun SettingsScreen(onBack: () -> Unit, onSignedOut: () -> Unit) {
                 modifier = Modifier.clickable(enabled = !busy) { confirm = "restore" },
                 leadingContent = { Icon(Icons.Default.CloudDownload, null) },
                 headlineContent = { Text("Restore from Telegram") },
-                supportingContent = { Text("Replace this device's index with the pinned one") },
+                supportingContent = { Text("Replace this phone's folder list with the one saved in the channel") },
             )
             ListItem(
                 modifier = Modifier.clickable(enabled = !busy) { vm.clearCache() },
                 leadingContent = { Icon(Icons.Default.CleaningServices, null) },
                 headlineContent = { Text("Clear cache") },
-                supportingContent = { Text("Delete previews and streamed media stored on this phone") },
+                supportingContent = { Text("Delete thumbnails, previews and streamed media stored on this phone") },
             )
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             ListItem(
                 modifier = Modifier.clickable(enabled = !busy) { confirm = "signout" },
                 leadingContent = { Icon(Icons.AutoMirrored.Filled.Logout, null, tint = MaterialTheme.colorScheme.error) },
-                headlineContent = { Text("Disconnect", color = MaterialTheme.colorScheme.error) },
-                supportingContent = { Text("Your files stay in the channel; connect again to get them back") },
+                headlineContent = { Text("Sign out", color = MaterialTheme.colorScheme.error) },
+                supportingContent = { Text("Your files stay in the channel; sign in again to get them back") },
             )
         }
     }
@@ -236,9 +230,9 @@ fun SettingsScreen(onBack: () -> Unit, onSignedOut: () -> Unit) {
         )
         "signout" -> AlertDialog(
             onDismissRequest = { confirm = null },
-            title = { Text("Disconnect?") },
-            text = { Text("The index is saved to the channel first. Running transfers are cancelled.") },
-            confirmButton = { TextButton(onClick = { confirm = null; vm.signOut(onSignedOut) }) { Text("Disconnect") } },
+            title = { Text("Sign out?") },
+            text = { Text("The index is saved to the channel first, then this phone's Telegram session is ended. Running transfers are cancelled.") },
+            confirmButton = { TextButton(onClick = { confirm = null; vm.signOut(onSignedOut) }) { Text("Sign out") } },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } },
         )
     }

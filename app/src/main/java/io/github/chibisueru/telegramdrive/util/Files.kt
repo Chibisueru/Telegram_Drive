@@ -49,3 +49,6 @@ fun formatSize(bytes: Long): String {
 
 fun formatDate(millis: Long): String =
     DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(millis))
+
+/** A file name that is safe to use on disk. */
+fun safeFileName(name: String) = name.replace(Regex("[/\\\\:*?\"<>|\\x00-\\x1F]"), "_").ifBlank { "file" }

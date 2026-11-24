@@ -66,7 +66,7 @@ class ViewerViewModel(private val c: AppContainer, private val fileId: String) :
         cacheJob = viewModelScope.launch {
             _cache.value = CacheState.Loading(0f)
             try {
-                val f = c.files.cacheForViewing(entity) { _cache.value = CacheState.Loading(it) }
+                val f = c.files.download(entity.remoteId, priority = 32) { _cache.value = CacheState.Loading(it) }
                 _cache.value = CacheState.Ready(f)
                 onReady?.invoke(f)
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -85,6 +85,12 @@ class ViewerViewModel(private val c: AppContainer, private val fileId: String) :
 
     override fun onCleared() {
         _player?.release()
+        // Stop downloading what the user no longer looks at (finished files stay cached).
+        val streaming = _player != null
         _player = null
+        val remoteId = file.value?.remoteId
+        if (remoteId != null && (streaming || cacheJob?.isActive == true)) {
+            c.scope.launch { c.files.cancelDownload(remoteId) }
+        }
     }
 }

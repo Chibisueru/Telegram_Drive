@@ -31,16 +31,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
         runCatching { setForeground(transferForegroundInfo(applicationContext, notificationId, "Downloading", file.name, 0f)) }
 
         val resolver = applicationContext.contentResolver
-        val target = resolver.insert(
-            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-            ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, file.name)
-                put(MediaStore.Downloads.MIME_TYPE, file.mimeType)
-                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Telegram Drive")
-                put(MediaStore.Downloads.IS_PENDING, 1)
-            },
-        ) ?: return Result.success(workDataOf(TransferKeys.NAME to file.name, TransferKeys.ERROR to "Can't create file in Downloads"))
-
+        var target: android.net.Uri? = null
         return try {
             coroutineScope {
                 val reporter = launch {
@@ -50,25 +41,31 @@ class DownloadWorker(context: Context, params: WorkerParameters) : CoroutineWork
                         delay(700)
                     }
                 }
+                val local = c.files.download(file.remoteId, priority = 8) { progress = it * 0.95f }
                 withContext(Dispatchers.IO) {
-                    resolver.openOutputStream(target)!!.buffered().use { out ->
-                        val cached = c.files.cachedFile(file)
-                        if (cached.exists() && cached.length() == file.size) {
-                            cached.inputStream().use { it.copyTo(out) }
-                        } else {
-                            c.files.downloadTo(file, out) { done, total -> if (total > 0) progress = done.toFloat() / total }
-                        }
-                    }
+                    target = resolver.insert(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        ContentValues().apply {
+                            put(MediaStore.Downloads.DISPLAY_NAME, file.name)
+                            put(MediaStore.Downloads.MIME_TYPE, file.mimeType)
+                            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Telegram Drive")
+                            put(MediaStore.Downloads.IS_PENDING, 1)
+                        },
+                    ) ?: error("Can't create the file in Downloads")
+                    resolver.openOutputStream(target!!)!!.use { out -> local.inputStream().use { it.copyTo(out) } }
+                    resolver.update(target!!, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
                 }
-                resolver.update(target, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
                 reporter.cancel()
             }
             Result.success(workDataOf(TransferKeys.NAME to file.name, TransferKeys.PROGRESS to 1f))
         } catch (e: CancellationException) {
-            withContext(NonCancellable) { resolver.delete(target, null, null) }
+            withContext(NonCancellable) {
+                target?.let { resolver.delete(it, null, null) }
+                c.files.cancelDownload(file.remoteId)
+            }
             throw e
         } catch (e: Exception) {
-            resolver.delete(target, null, null)
+            target?.let { resolver.delete(it, null, null) }
             Result.success(workDataOf(TransferKeys.NAME to file.name, TransferKeys.ERROR to (e.message ?: e.javaClass.simpleName)))
         }
     }

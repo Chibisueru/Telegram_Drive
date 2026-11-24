@@ -13,21 +13,17 @@ import androidx.work.workDataOf
 import io.github.chibisueru.telegramdrive.data.db.DriveDao
 import io.github.chibisueru.telegramdrive.data.db.FileEntity
 import io.github.chibisueru.telegramdrive.data.db.FolderEntity
-import io.github.chibisueru.telegramdrive.telegram.BotApi
-import io.github.chibisueru.telegramdrive.telegram.TelegramFiles
+import io.github.chibisueru.telegramdrive.telegram.TgFiles
 import io.github.chibisueru.telegramdrive.util.guessMimeType
 import io.github.chibisueru.telegramdrive.work.DownloadWorker
 import io.github.chibisueru.telegramdrive.work.TransferKeys
 import io.github.chibisueru.telegramdrive.work.UploadWorker
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class DriveRepository(
     private val context: Context,
     val dao: DriveDao,
-    private val bot: BotApi,
-    private val files: TelegramFiles,
+    private val files: TgFiles,
     private val settings: SettingsStore,
     private val indexSync: IndexSync,
 ) {
@@ -70,17 +66,10 @@ class DriveRepository(
     private suspend fun deleteFiles(list: List<FileEntity>) {
         if (list.isEmpty()) return
         val ids = list.map { it.id }
-        val messageIds = ids.chunked(500).flatMap { dao.chunksOf(it) }.map { it.messageId } +
-            list.mapNotNull { it.thumbMessageId }
-        ids.chunked(500).forEach {
-            dao.deleteChunks(it)
-            dao.deleteFiles(it)
-        }
-        files.deleteLocalCopies(ids)
+        ids.chunked(500).forEach { dao.deleteFiles(it) }
         indexSync.requestSync()
-        // Remove the bytes from Telegram too (best effort; very old messages may be refused).
-        val chatId = settings.current().chatId
-        withContext(Dispatchers.IO) { bot.deleteMessages(chatId, messageIds) }
+        // Remove the messages too; as the channel's owner the user can delete them at any age.
+        files.deleteMessages(settings.current().chatId, list.map { it.messageId })
     }
 
     /** The folder plus every folder nested below it. */

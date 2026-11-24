@@ -39,8 +39,6 @@ interface DriveDao {
     @Query("SELECT * FROM files WHERE id = :id")
     suspend fun file(id: String): FileEntity?
 
-    @Query("SELECT * FROM chunks WHERE fileId = :fileId ORDER BY idx")
-    suspend fun chunks(fileId: String): List<ChunkEntity>
 
     @Query("SELECT * FROM folders")
     suspend fun allFolders(): List<FolderEntity>
@@ -48,14 +46,10 @@ interface DriveDao {
     @Query("SELECT * FROM files")
     suspend fun allFiles(): List<FileEntity>
 
-    @Query("SELECT * FROM chunks")
-    suspend fun allChunks(): List<ChunkEntity>
 
     @Query("SELECT * FROM files WHERE folderId IN (:folderIds)")
     suspend fun filesInFolders(folderIds: List<String>): List<FileEntity>
 
-    @Query("SELECT * FROM chunks WHERE fileId IN (:fileIds)")
-    suspend fun chunksOf(fileIds: List<String>): List<ChunkEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFolder(folder: FolderEntity)
@@ -66,8 +60,6 @@ interface DriveDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFiles(files: List<FileEntity>)
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertChunks(chunks: List<ChunkEntity>)
 
     @Query("UPDATE folders SET name = :name WHERE id = :id")
     suspend fun renameFolder(id: String, name: String)
@@ -84,8 +76,6 @@ interface DriveDao {
     @Query("DELETE FROM files WHERE id IN (:ids)")
     suspend fun deleteFiles(ids: List<String>)
 
-    @Query("DELETE FROM chunks WHERE fileId IN (:ids)")
-    suspend fun deleteChunks(ids: List<String>)
 
     @Query("DELETE FROM folders WHERE id IN (:ids)")
     suspend fun deleteFolders(ids: List<String>)
@@ -96,28 +86,20 @@ interface DriveDao {
     @Query("DELETE FROM files")
     suspend fun clearFiles()
 
-    @Query("DELETE FROM chunks")
-    suspend fun clearChunks()
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFile(file: FileEntity)
 
     @Transaction
-    suspend fun insertFileWithChunks(file: FileEntity, chunks: List<ChunkEntity>) {
-        insertFiles(listOf(file))
-        insertChunks(chunks)
-    }
-
-    @Transaction
-    suspend fun replaceAll(folders: List<FolderEntity>, files: List<FileEntity>, chunks: List<ChunkEntity>) {
-        clearChunks()
+    suspend fun replaceAll(folders: List<FolderEntity>, files: List<FileEntity>) {
         clearFiles()
         clearFolders()
         insertFolders(folders)
         insertFiles(files)
-        insertChunks(chunks)
     }
 
     @Transaction
     suspend fun clearAll() {
-        clearChunks()
         clearFiles()
         clearFolders()
     }

@@ -17,10 +17,13 @@ private val Context.dataStore by preferencesDataStore(name = "settings")
 enum class SortMode { NAME, NEWEST, SIZE }
 
 data class AppSettings(
-    val token: String = "",
-    val chatId: String = "",
-    val botName: String = "",
+    /** From my.telegram.org; TDLib needs them every time it starts. */
+    val apiId: Int = 0,
+    val apiHash: String = "",
+    /** The private channel holding the drive. */
+    val chatId: Long = 0,
     val chatTitle: String = "",
+    val accountName: String = "",
     val dynamicColor: Boolean = true,
     /** 0 = follow system, 1 = light, 2 = dark */
     val themeMode: Int = 0,
@@ -29,14 +32,15 @@ data class AppSettings(
     val indexMessageId: Long = 0,
     val lastSyncAt: Long = 0,
 ) {
-    val isConfigured: Boolean get() = token.isNotBlank() && chatId.isNotBlank()
+    val isConfigured: Boolean get() = apiId != 0 && apiHash.isNotBlank() && chatId != 0L
 }
 
 class SettingsStore(private val context: Context) {
     private object Keys {
-        val token = stringPreferencesKey("token")
-        val chatId = stringPreferencesKey("chat_id")
-        val botName = stringPreferencesKey("bot_name")
+        val apiId = intPreferencesKey("api_id")
+        val apiHash = stringPreferencesKey("api_hash")
+        val chatId = longPreferencesKey("drive_chat_id")
+        val accountName = stringPreferencesKey("account_name")
         val chatTitle = stringPreferencesKey("chat_title")
         val dynamicColor = booleanPreferencesKey("dynamic_color")
         val themeMode = intPreferencesKey("theme_mode")
@@ -51,9 +55,10 @@ class SettingsStore(private val context: Context) {
     suspend fun current(): AppSettings = flow.first()
 
     private fun Preferences.toSettings() = AppSettings(
-        token = this[Keys.token].orEmpty(),
-        chatId = this[Keys.chatId].orEmpty(),
-        botName = this[Keys.botName].orEmpty(),
+        apiId = this[Keys.apiId] ?: 0,
+        apiHash = this[Keys.apiHash].orEmpty(),
+        chatId = this[Keys.chatId] ?: 0,
+        accountName = this[Keys.accountName].orEmpty(),
         chatTitle = this[Keys.chatTitle].orEmpty(),
         dynamicColor = this[Keys.dynamicColor] ?: true,
         themeMode = this[Keys.themeMode] ?: 0,
@@ -63,12 +68,13 @@ class SettingsStore(private val context: Context) {
         lastSyncAt = this[Keys.lastSyncAt] ?: 0,
     )
 
-    suspend fun saveConnection(token: String, chatId: String, botName: String, chatTitle: String) {
+    suspend fun saveConnection(apiId: Int, apiHash: String, chatId: Long, chatTitle: String, accountName: String) {
         context.dataStore.edit {
-            it[Keys.token] = token
+            it[Keys.apiId] = apiId
+            it[Keys.apiHash] = apiHash
             it[Keys.chatId] = chatId
-            it[Keys.botName] = botName
             it[Keys.chatTitle] = chatTitle
+            it[Keys.accountName] = accountName
             it[Keys.indexMessageId] = 0
             it[Keys.lastSyncAt] = 0
         }
@@ -76,9 +82,10 @@ class SettingsStore(private val context: Context) {
 
     suspend fun clearConnection() {
         context.dataStore.edit {
-            it.remove(Keys.token)
+            it.remove(Keys.apiId)
+            it.remove(Keys.apiHash)
             it.remove(Keys.chatId)
-            it.remove(Keys.botName)
+            it.remove(Keys.accountName)
             it.remove(Keys.chatTitle)
             it.remove(Keys.indexMessageId)
             it.remove(Keys.lastSyncAt)

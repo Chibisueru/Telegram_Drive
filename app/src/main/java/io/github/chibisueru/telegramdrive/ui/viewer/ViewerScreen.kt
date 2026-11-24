@@ -149,7 +149,6 @@ fun ViewerScreen(fileId: String, onBack: () -> Unit) {
                     Text("Type: ${entity.mimeType}")
                     Text("Size: ${formatSize(entity.size)}")
                     Text("Uploaded: ${formatDate(entity.createdAt)}")
-                    Text("Stored as ${((entity.size + entity.chunkSize - 1) / entity.chunkSize)} Telegram part(s)")
                 }
             },
             confirmButton = { TextButton(onClick = { showInfo = false }) { Text("Close") } },

@@ -16,6 +16,10 @@ android {
         targetSdk = 37
         versionCode = providers.gradleProperty("app.versionCode").get().toInt()
         versionName = providers.gradleProperty("app.versionName").get()
+
+        // TDLib (the Telegram client library) ships ~20 MB per ABI.
+        // Android 16 phones are 64-bit; x86_64 keeps emulators working.
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
     buildTypes {
@@ -70,5 +74,5 @@ dependencies {
 
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
-    implementation(libs.okhttp)
+    implementation(libs.tdl.coroutines)
 }

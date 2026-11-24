@@ -110,8 +110,8 @@ fun FileVisual(file: FileEntity, modifier: Modifier, iconSize: Int = 24) {
     val kind = kindOf(file.mimeType, file.name)
     val (bg, fg) = kindColors(kind)
     val context = LocalContext.current
-    val thumb by produceState<java.io.File?>(null, file.id, file.thumbFileId) {
-        value = if (file.thumbFileId != null) context.container.files.thumbnail(file) else null
+    val thumb by produceState<java.io.File?>(null, file.id, file.thumbRemoteId) {
+        value = file.thumbRemoteId?.let { context.container.files.downloadSmall(it) }
     }
     Box(modifier.background(bg), contentAlignment = Alignment.Center) {
         if (thumb != null) {

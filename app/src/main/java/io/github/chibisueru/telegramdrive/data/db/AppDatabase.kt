@@ -4,8 +4,8 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [FolderEntity::class, FileEntity::class, ChunkEntity::class],
-    version = 1,
+    entities = [FolderEntity::class, FileEntity::class],
+    version = 2,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
