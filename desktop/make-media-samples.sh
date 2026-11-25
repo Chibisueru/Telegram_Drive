@@ -3,7 +3,7 @@
 # Used by MediaEngineTest and the CI self-test:  desktop/make-media-samples.sh [out-dir]
 set -euo pipefail
 out="${1:-$(dirname "$0")/build/media-samples}"
-mkdir -p "$out" && cd "$out"
+mkdir -p "$out" && out="$(cd "$out" && pwd)" && cd "$out"
 q=(-loglevel error -y)
 ffmpeg "${q[@]}" -f lavfi -i "testsrc=size=300x300:rate=1:duration=1" -frames:v 1 cover.png
 tone=(-f lavfi -i "sine=frequency=440:duration=6")
