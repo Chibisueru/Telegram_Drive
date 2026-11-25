@@ -3,6 +3,7 @@ package io.github.chibisueru.telegramdrive.data
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import io.github.chibisueru.telegramdrive.data.db.DriveDao
 import io.github.chibisueru.telegramdrive.data.db.FileEntity
@@ -208,6 +209,56 @@ class DriveRepository(
         }
         transfers.enqueue(items)
         return items.size
+    }
+
+    /**
+     * Queues every file in a picked folder for upload, recreating the folder and all its
+     * subfolders in the drive. Returns how many folders were created and files queued.
+     */
+    suspend fun enqueueFolderUpload(tree: Uri, parentId: String?): Pair<Int, Int> {
+        val resolver = context.contentResolver
+        // Keeps read access to everything inside, also after the app was closed.
+        runCatching { resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        val items = mutableListOf<TransferEntity>()
+        var folderCount = 0
+        val now = System.currentTimeMillis()
+        val columns = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE,
+        )
+        withContext(Dispatchers.IO) {
+            val rootId = DocumentsContract.getTreeDocumentId(tree)
+            val rootName = resolver.query(DocumentsContract.buildDocumentUriUsingTree(tree, rootId), columns, null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(1) else null } ?: "Folder"
+            val queue = ArrayDeque(listOf(Triple(rootId, rootName, parentId)))
+            while (queue.isNotEmpty()) {
+                val (docId, name, parent) = queue.removeFirst()
+                val folder = FolderEntity(UUID.randomUUID().toString(), parent, name.trim().ifBlank { "Folder" }, now)
+                dao.insertFolder(folder)
+                folderCount++
+                resolver.query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId), columns, null, null, null)?.use { c ->
+                    while (c.moveToNext()) {
+                        val id = c.getString(0) ?: continue
+                        val childName = c.getString(1) ?: "file"
+                        val mime = c.getString(2) ?: ""
+                        if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                            queue += Triple(id, childName, folder.id)
+                        } else {
+                            items += TransferEntity(
+                                upload = true, name = childName,
+                                mimeType = mime.takeIf { it.isNotBlank() && it != "application/octet-stream" } ?: guessMimeType(childName),
+                                size = if (c.isNull(3)) -1L else c.getLong(3),
+                                sourceUri = DocumentsContract.buildDocumentUriUsingTree(tree, id).toString(),
+                                folderId = folder.id,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        indexSync.requestSync()
+        transfers.enqueue(items)
+        return folderCount to items.size
     }
 
     suspend fun enqueueDownload(file: FileEntity) {

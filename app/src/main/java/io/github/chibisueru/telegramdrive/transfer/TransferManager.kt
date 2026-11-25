@@ -52,6 +52,19 @@ class TransferManager(
         start()
     }
 
+    suspend fun retryAllErrored() {
+        dao.requeueErrored()
+        start()
+    }
+
+    /** Removes failed and cancelled entries (uploads also drop their private copies). */
+    suspend fun clearErrored() {
+        dao.errored().forEach { if (it.upload) runner.discardSource(it) }
+        dao.clearErrored()
+    }
+
+    suspend fun clearCompleted() = dao.clearCompleted()
+
     /** Removes finished entries; failed/cancelled uploads also drop their copies. */
     suspend fun clearFinished() {
         dao.finished().forEach { if (it.upload && it.state != TransferEntity.STATE_DONE) runner.discardSource(it) }

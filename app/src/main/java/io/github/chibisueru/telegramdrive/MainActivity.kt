@@ -36,6 +36,10 @@ import io.github.chibisueru.telegramdrive.ui.theme.TgDriveTheme
 import io.github.chibisueru.telegramdrive.ui.viewer.ViewerScreen
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.flow.StateFlow
 
 /** A FragmentActivity because the system biometric prompt needs one. */
@@ -50,6 +54,16 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         handleIntent(intent)
         val c = container
+        // While the app is on screen, pick up changes made on other devices (phones, computers)
+        // every 30 seconds; new index posts also trigger a refresh right away (see IndexSync).
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    runCatching { c.indexSync.refreshIfChanged() }
+                    delay(30_000)
+                }
+            }
+        }
         setContent {
             val settings by c.settings.flow.collectAsStateWithLifecycle(initialValue = null)
             val locked by c.appLock.locked.collectAsStateWithLifecycle()
@@ -90,8 +104,6 @@ class MainActivity : FragmentActivity() {
         super.onStart()
         // Pick up uploads/downloads left over from earlier (the service can only start while visible).
         container.transfers.resumeIfPending()
-        // Pick up changes made on another device (another phone or the desktop app).
-        container.scope.launch { runCatching { container.indexSync.refreshIfChanged() } }
     }
 
     override fun onNewIntent(intent: Intent) {

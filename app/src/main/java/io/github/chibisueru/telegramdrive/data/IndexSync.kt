@@ -16,8 +16,14 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import io.github.chibisueru.telegramdrive.telegram.LoginStep
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -76,6 +82,22 @@ class IndexSync(
         scope.launch {
             trigger.debounce(2_500).collect { runCatching { syncNow() } }
         }
+        // React right away when another device posts a new index into the channel.
+        scope.launch {
+            combine(telegram.step, settings.flow.map { it.chatId }.distinctUntilChanged()) { step, chat -> step to chat }
+                .collectLatest { (step, chatId) ->
+                    if (step !is LoginStep.Ready || chatId == 0L) return@collectLatest
+                    val client = runCatching { telegram.client }.getOrNull() ?: return@collectLatest
+                    runCatching { client.openChat(chatId) }
+                    client.newMessageUpdates.collect { u ->
+                        val m = u.message
+                        if (m.chatId == chatId && DriveProvisioner.isIndexMessage(m) && m.id != settings.current().indexMessageId) {
+                            delay(1_000)
+                            runCatching { refreshIfChanged() }
+                        }
+                    }
+                }
+        }
     }
 
     /** Schedules an upload of the index; bursts of changes are coalesced into one upload. */
@@ -107,8 +129,8 @@ class IndexSync(
     /** The index another device posted, if the channel points somewhere newer than our last post. */
     private suspend fun newerRemoteIndex(chatId: Long, known: Long): Pair<Long, JSONObject>? {
         val client = telegram.awaitReady()
-        val messageId = DriveProvisioner.indexMessageId(client, chatId) ?: return null
-        if (messageId == known) return null
+        val messageId = DriveProvisioner.latestIndexMessageId(client, chatId) ?: return null
+        if (messageId <= known) return null
         val json = downloadIndex(chatId, messageId) ?: return null
         return messageId to json
     }
@@ -118,7 +140,7 @@ class IndexSync(
         val message = runCatching { client.getMessage(chatId, messageId).get() }.getOrNull() ?: return null
         val doc = (message.content as? MessageDocument)?.document ?: return null
         if (doc.fileName != INDEX_FILE_NAME) return null
-        val local = files.download(doc.document.remote.id, priority = 32)
+        val local = files.download(doc.document.remote.id, priority = 32, messageId = messageId)
         val json = withContext(Dispatchers.IO) { JSONObject(local.readText()) }
         return json.takeIf { it.optInt("version") == FORMAT_VERSION }
     }
@@ -129,7 +151,9 @@ class IndexSync(
      */
     suspend fun refreshIfChanged(): Boolean = mutex.withLock {
         val s = settings.current()
-        if (!s.isConfigured || dirty.get()) return@withLock false
+        if (!s.isConfigured) return@withLock false
+        // Changes are waiting here: posting them merges in the other device's index too.
+        if (dirty.get()) { trigger.tryEmit(Unit); return@withLock false }
         val (messageId, json) = runCatching { newerRemoteIndex(s.chatId, s.indexMessageId) }.getOrNull() ?: return@withLock false
         if (dirty.get()) return@withLock false
         import(json)
@@ -177,7 +201,7 @@ class IndexSync(
     suspend fun restoreFromTelegram(): Boolean = mutex.withLock {
         val s = settings.current()
         val client = telegram.awaitReady()
-        val messageId = DriveProvisioner.indexMessageId(client, s.chatId) ?: return@withLock false
+        val messageId = DriveProvisioner.latestIndexMessageId(client, s.chatId) ?: return@withLock false
         val json = downloadIndex(s.chatId, messageId) ?: return@withLock false
         import(json)
         settings.setIndexSynced(messageId, System.currentTimeMillis())

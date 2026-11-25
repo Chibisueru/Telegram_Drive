@@ -92,12 +92,25 @@ class TgFiles(private val telegram: Telegram) {
         }
     }
 
-    suspend fun resolve(remoteId: String): TdFile = telegram.awaitReady().getRemoteFile(remoteId).get()
+    /** The drive channel, for looking files up through their message. */
+    var chatId: () -> Long = { 0L }
+
+    /**
+     * The TDLib file for a drive file. Going through its message (when known) lets TDLib renew
+     * the file's access reference, which a bare remote ID from another device can't do.
+     */
+    suspend fun resolve(remoteId: String, messageId: Long? = null): TdFile {
+        val c = telegram.awaitReady()
+        val viaMessage = messageId?.takeIf { it != 0L && chatId() != 0L }?.let { id ->
+            runCatching { (c.getMessage(chatId(), id).get().content as? MessageDocument)?.document?.document }.getOrNull()
+        }
+        return viaMessage ?: c.getRemoteFile(remoteId).get()
+    }
 
     /** Downloads the whole file (or reuses TDLib's local copy) and returns it. */
-    suspend fun download(remoteId: String, priority: Int = 16, onProgress: (Float) -> Unit = {}): File = coroutineScope {
+    suspend fun download(remoteId: String, priority: Int = 16, messageId: Long? = null, onProgress: (Float) -> Unit = {}): File = coroutineScope {
         val c = telegram.awaitReady()
-        val file = c.getRemoteFile(remoteId).get()
+        val file = resolve(remoteId, messageId)
         if (file.isComplete()) return@coroutineScope File(file.local.path)
 
         val done = CompletableDeferred<TdFile>()

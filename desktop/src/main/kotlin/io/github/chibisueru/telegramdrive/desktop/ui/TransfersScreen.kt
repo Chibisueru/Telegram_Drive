@@ -27,6 +27,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.rememberScrollbarAdapter
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -40,35 +52,80 @@ import io.github.chibisueru.telegramdrive.desktop.data.openWithSystem
 import io.github.chibisueru.telegramdrive.desktop.transfer.Transfer
 import io.github.chibisueru.telegramdrive.desktop.transfer.TransferState
 
+/** Which transfers the page lists: running ones by default, or one of the two pills. */
+private enum class TransferFilter { ACTIVE, COMPLETED, ERRORED }
+
 @Composable
 fun TransfersScreen(c: AppContainer) {
     val list by c.transfers.list.collectAsState()
     val active = list.filter { it.active }
-    val finished = list.filter { !it.active }.reversed()
+    val completed = list.filter { it.state == TransferState.DONE }.reversed()
+    val errored = list.filter { it.state == TransferState.FAILED || it.state == TransferState.CANCELLED }.reversed()
+    var filter by remember { mutableStateOf(TransferFilter.ACTIVE) }
+    fun toggle(f: TransferFilter) { filter = if (filter == f) TransferFilter.ACTIVE else f }
+
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Transfers", style = MaterialTheme.typography.titleLarge)
-                val done = list.count { it.state == TransferState.DONE }
-                if (list.isNotEmpty()) Text(
-                    "${active.size} in progress · $done done",
+                Text(
+                    "${active.size} in progress",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (active.isNotEmpty()) TextButton(onClick = c.transfers::cancelAll) { Text("Cancel all") }
-            if (finished.isNotEmpty()) TextButton(onClick = c.transfers::clearFinished) { Text("Clear finished") }
+            when (filter) {
+                TransferFilter.ACTIVE -> if (active.isNotEmpty()) TextButton(onClick = c.transfers::cancelAll) { Text("Cancel all") }
+                TransferFilter.COMPLETED -> if (completed.isNotEmpty()) TextButton(onClick = c.transfers::clearCompleted) { Text("Clear all") }
+                TransferFilter.ERRORED -> if (errored.isNotEmpty()) {
+                    FilledTonalButton(onClick = c.transfers::retryAllErrored) {
+                        Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp)); Text("  Retry all")
+                    }
+                    Spacer(Modifier.size(8.dp))
+                    OutlinedButton(onClick = c.transfers::clearErrored) {
+                        Icon(Icons.Filled.Close, null, Modifier.size(18.dp)); Text("  Clear all")
+                    }
+                }
+            }
         }
-        if (list.isEmpty()) {
-            EmptyState(Icons.Outlined.SwapVert, "No transfers", "Uploads and downloads show up here while they run.")
+        Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = filter == TransferFilter.COMPLETED,
+                onClick = { toggle(TransferFilter.COMPLETED) },
+                label = { Text("Completed · ${completed.size}") },
+                leadingIcon = { Icon(Icons.Filled.CheckCircle, null, Modifier.size(18.dp)) },
+            )
+            FilterChip(
+                selected = filter == TransferFilter.ERRORED,
+                onClick = { toggle(TransferFilter.ERRORED) },
+                label = { Text("Errored · ${errored.size}") },
+                leadingIcon = {
+                    Icon(Icons.Filled.Error, null, Modifier.size(18.dp),
+                        tint = if (errored.isNotEmpty()) MaterialTheme.colorScheme.error else LocalContentColor.current)
+                },
+            )
+        }
+        val shown = when (filter) {
+            TransferFilter.ACTIVE -> active
+            TransferFilter.COMPLETED -> completed
+            TransferFilter.ERRORED -> errored
+        }
+        if (shown.isEmpty()) {
+            when (filter) {
+                TransferFilter.ACTIVE -> EmptyState(Icons.Outlined.SwapVert, "Nothing in progress", "Uploads and downloads show up here while they run.")
+                TransferFilter.COMPLETED -> EmptyState(Icons.Filled.CheckCircle, "No completed transfers", "Finished uploads and downloads are listed here.")
+                TransferFilter.ERRORED -> EmptyState(Icons.Filled.Error, "No errors", "Transfers that fail or are cancelled are listed here, ready to retry.")
+            }
             return
         }
-        LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(active, key = { it.id }) { TransferRow(c, it) }
-            if (finished.isNotEmpty()) item {
-                Text("Finished", Modifier.padding(start = 8.dp, top = 16.dp, bottom = 4.dp),
-                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        val listState = rememberLazyListState()
+        Box(Modifier.fillMaxSize()) {
+            LazyColumn(
+                Modifier.fillMaxSize().padding(end = 12.dp), state = listState,
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(shown, key = { it.id }) { TransferRow(c, it) }
             }
-            items(finished, key = { it.id }) { TransferRow(c, it) }
+            VerticalScrollbar(rememberScrollbarAdapter(listState), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
         }
     }
 }

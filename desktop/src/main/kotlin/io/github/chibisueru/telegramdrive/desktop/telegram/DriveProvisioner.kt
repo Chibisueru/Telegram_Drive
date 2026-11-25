@@ -5,6 +5,8 @@ import dev.g000sha256.tdl.TdlResult
 import dev.g000sha256.tdl.dto.ChatListArchive
 import dev.g000sha256.tdl.dto.ChatListMain
 import dev.g000sha256.tdl.dto.ChatTypeSupergroup
+import dev.g000sha256.tdl.dto.Message
+import dev.g000sha256.tdl.dto.MessageDocument
 
 data class DriveChannel(val chatId: Long, val title: String)
 
@@ -20,6 +22,25 @@ class DriveProvisioner(private val client: TdlClient) {
         fun describe(indexMessageId: Long? = null) =
             "Storage for the Telegram Drive app. Don't post, edit or delete messages here. $CHANNEL_MARKER" +
                 (indexMessageId?.let { " index:$it" } ?: "")
+
+        const val INDEX_FILE_NAME = "tgdrive_index.json"
+
+        /** True for a posted (not still sending) index document in the drive channel. */
+        fun isIndexMessage(m: Message) =
+            m.sendingState == null && (m.content as? MessageDocument)?.document?.fileName == INDEX_FILE_NAME
+
+        /**
+         * The newest index posted by any device. Opens the channel first: TDLib only receives a
+         * channel's updates while it is "open", so otherwise other devices' posts arrive late.
+         * Checks the latest messages as well as the description pointer, which TDLib caches.
+         */
+        suspend fun latestIndexMessageId(client: TdlClient, chatId: Long): Long? {
+            client.openChat(chatId)
+            val fromHistory = (client.getChatHistory(chatId, 0, 0, 30, false) as? TdlResult.Success)
+                ?.result?.messages?.filterNotNull()?.filter { isIndexMessage(it) }?.maxOfOrNull { it.id }
+            val fromDescription = indexMessageId(client, chatId)
+            return listOfNotNull(fromHistory, fromDescription).maxOrNull()
+        }
 
         /** Reads the latest index message ID from the channel description. */
         suspend fun indexMessageId(client: TdlClient, chatId: Long): Long? {

@@ -27,10 +27,15 @@ import java.io.RandomAccessFile
 class TelegramDataSource(
     private val dao: DriveDao,
     private val telegram: Telegram,
+    private val files: io.github.chibisueru.telegramdrive.telegram.TgFiles,
 ) : BaseDataSource(/* isNetwork = */ true) {
 
-    class Factory(private val dao: DriveDao, private val telegram: Telegram) : DataSource.Factory {
-        override fun createDataSource(): DataSource = TelegramDataSource(dao, telegram)
+    class Factory(
+        private val dao: DriveDao,
+        private val telegram: Telegram,
+        private val files: io.github.chibisueru.telegramdrive.telegram.TgFiles,
+    ) : DataSource.Factory {
+        override fun createDataSource(): DataSource = TelegramDataSource(dao, telegram, files)
     }
 
     companion object {
@@ -64,7 +69,7 @@ class TelegramDataSource(
         availableUntil = position
         runBlocking {
             val c = telegram.awaitReady()
-            tdFileId = c.getRemoteFile(entity.remoteId).get().id
+            tdFileId = files.resolve(entity.remoteId, entity.messageId).id
             c.downloadFile(tdFileId, PRIORITY, position, 0, false).get()
         }
         opened = true

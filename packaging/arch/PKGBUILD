@@ -2,7 +2,7 @@
 # Repackages the prebuilt app image (bundled Java runtime included) made by
 # `./gradlew :desktop:createDistributable`, which CI tars up as TelegramDrive-linux-x64.tar.gz.
 pkgname=telegram-drive
-pkgver=1.1.0
+pkgver=1.1.1
 pkgrel=1
 pkgdesc="Cloud drive that stores your files in your own Telegram account"
 arch=('x86_64')

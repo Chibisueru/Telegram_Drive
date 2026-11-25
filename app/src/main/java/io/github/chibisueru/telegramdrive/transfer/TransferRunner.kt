@@ -78,7 +78,7 @@ class TransferRunner(
     private suspend fun download(t: TransferEntity, onProgress: (Float) -> Unit) {
         val file = dao.file(t.fileId!!) ?: error("The file no longer exists")
         try {
-            val local = files.download(file.remoteId, priority = 8) { onProgress(it * 0.97f) }
+            val local = files.download(file.remoteId, priority = 8, messageId = file.messageId) { onProgress(it * 0.97f) }
             withContext(Dispatchers.IO) {
                 val resolver = context.contentResolver
                 val target = resolver.insert(

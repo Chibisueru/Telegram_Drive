@@ -163,7 +163,7 @@ private fun rememberLoad(c: AppContainer, file: DriveFile, attempt: Int): Load {
     var state by remember(file.id, attempt) { mutableStateOf<Load>(Load.Progress(0f)) }
     LaunchedEffect(file.id, attempt) {
         state = try {
-            Load.Ready(c.files.download(file.remoteId, priority = 32) { state = Load.Progress(it) })
+            Load.Ready(c.files.download(file.remoteId, priority = 32, messageId = file.messageId) { state = Load.Progress(it) })
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -274,7 +274,7 @@ private fun ExternalView(c: AppContainer, file: DriveFile, kind: FileKind) {
         error = null
         progress = 0f
         try {
-            val cached = c.files.download(file.remoteId, priority = 32) { progress = it }
+            val cached = c.files.download(file.remoteId, priority = 32, messageId = file.messageId) { progress = it }
             val named = withContext(Dispatchers.IO) { namedCopy(file, cached) }
             openWithSystem(named)
         } catch (e: CancellationException) {

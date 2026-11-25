@@ -25,6 +25,16 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import io.github.chibisueru.telegramdrive.ui.components.VerticalScrollbar
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -67,7 +77,13 @@ class TransfersViewModel(private val c: AppContainer) : ViewModel() {
     fun retry(t: TransferEntity) = viewModelScope.launch { c.transfers.retry(t.id) }
     fun cancelAll() = viewModelScope.launch { c.transfers.cancelAll() }
     fun clearFinished() = viewModelScope.launch { c.transfers.clearFinished() }
+    fun retryAllErrored() = viewModelScope.launch { c.transfers.retryAllErrored() }
+    fun clearErrored() = viewModelScope.launch { c.transfers.clearErrored() }
+    fun clearCompleted() = viewModelScope.launch { c.transfers.clearCompleted() }
 }
+
+/** Which transfers the page lists: running ones by default, or one of the two pills. */
+private enum class TransferFilter { ACTIVE, COMPLETED, ERRORED }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,7 +92,10 @@ fun TransfersScreen() {
     val transfers by vm.transfers.collectAsStateWithLifecycle()
     val waitingForWifi by vm.waitingForWifi.collectAsStateWithLifecycle()
     val active = transfers.filter { it.active }.sortedBy { if (it.state == TransferEntity.STATE_RUNNING) 0 else 1 }
-    val finished = transfers.filter { !it.active }
+    val completed = transfers.filter { it.state == TransferEntity.STATE_DONE }
+    val errored = transfers.filter { it.state == TransferEntity.STATE_FAILED || it.state == TransferEntity.STATE_CANCELLED }
+    var filter by rememberSaveable { mutableStateOf(TransferFilter.ACTIVE) }
+    fun toggle(f: TransferFilter) { filter = if (filter == f) TransferFilter.ACTIVE else f }
 
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
@@ -84,55 +103,107 @@ fun TransfersScreen() {
             TopAppBar(
                 title = { Text("Transfers") },
                 actions = {
-                    if (active.isNotEmpty()) TextButton(onClick = vm::cancelAll) { Text("Cancel all") }
-                    if (finished.isNotEmpty()) TextButton(onClick = vm::clearFinished) { Text("Clear finished") }
+                    if (filter == TransferFilter.ACTIVE && active.isNotEmpty()) TextButton(onClick = vm::cancelAll) { Text("Cancel all") }
+                    if (filter == TransferFilter.COMPLETED && completed.isNotEmpty()) TextButton(onClick = vm::clearCompleted) { Text("Clear all") }
                 },
             )
         },
     ) { padding ->
-        if (transfers.isEmpty()) {
-            Column(
-                Modifier.fillMaxSize().padding(padding).padding(32.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.size(112.dp)) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.Download, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                    }
-                }
-                Text("No transfers", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 24.dp))
-                Text(
-                    "Uploads and downloads show up here while they run.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 8.dp),
+                FilterChip(
+                    selected = filter == TransferFilter.COMPLETED,
+                    onClick = { toggle(TransferFilter.COMPLETED) },
+                    label = { Text("Completed · ${completed.size}") },
+                    leadingIcon = { Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp)) },
+                )
+                FilterChip(
+                    selected = filter == TransferFilter.ERRORED,
+                    onClick = { toggle(TransferFilter.ERRORED) },
+                    label = { Text("Errored · ${errored.size}") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Error, null, Modifier.size(18.dp),
+                            tint = if (errored.isNotEmpty()) MaterialTheme.colorScheme.error else LocalContentColor.current)
+                    },
                 )
             }
-            return@Scaffold
-        }
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(bottom = 16.dp)) {
-            if (waitingForWifi && active.isNotEmpty()) {
-                item {
-                    ListItem(
-                        leadingContent = { Icon(Icons.Default.WifiOff, null, tint = MaterialTheme.colorScheme.error) },
-                        headlineContent = { Text("Waiting for Wi-Fi") },
-                        supportingContent = { Text("“Wi-Fi only” is on in Settings. Transfers continue when you connect.") },
-                    )
+            if (filter == TransferFilter.ERRORED && errored.isNotEmpty()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilledTonalButton(onClick = vm::retryAllErrored, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Refresh, null, Modifier.size(18.dp)); Text("  Retry all")
+                    }
+                    OutlinedButton(onClick = vm::clearErrored, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Default.Close, null, Modifier.size(18.dp)); Text("  Clear all")
+                    }
                 }
             }
-            if (active.isNotEmpty()) {
-                item { Section("In progress · ${active.size}") }
-                items(active, key = { it.id }) { t -> TransferRow(t, onCancel = { vm.cancel(t) }, onRetry = null) }
+            val shown = when (filter) {
+                TransferFilter.ACTIVE -> active
+                TransferFilter.COMPLETED -> completed
+                TransferFilter.ERRORED -> errored
             }
-            if (finished.isNotEmpty()) {
-                item { Section("Finished") }
-                items(finished, key = { it.id }) { t ->
-                    TransferRow(t, onCancel = null, onRetry = if (t.state != TransferEntity.STATE_DONE) ({ vm.retry(t) }) else null)
+            if (shown.isEmpty()) {
+                when (filter) {
+                    TransferFilter.ACTIVE -> Empty(Icons.Default.Download, "Nothing in progress", "Uploads and downloads show up here while they run.")
+                    TransferFilter.COMPLETED -> Empty(Icons.Default.CheckCircle, "No completed transfers", "Finished uploads and downloads are listed here.")
+                    TransferFilter.ERRORED -> Empty(Icons.Default.Error, "No errors", "Transfers that fail or are cancelled are listed here, ready to retry.")
                 }
+                return@Column
+            }
+            Box(Modifier.fillMaxSize()) {
+                val listState = rememberLazyListState()
+                LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 16.dp)) {
+                    if (filter == TransferFilter.ACTIVE && waitingForWifi) {
+                        item {
+                            ListItem(
+                                leadingContent = { Icon(Icons.Default.WifiOff, null, tint = MaterialTheme.colorScheme.error) },
+                                headlineContent = { Text("Waiting for Wi-Fi") },
+                                supportingContent = { Text("“Wi-Fi only” is on in Settings. Transfers continue when you connect.") },
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            )
+                        }
+                    }
+                    if (filter == TransferFilter.ACTIVE) item { Section("In progress · ${active.size}") }
+                    items(shown, key = { it.id }) { t ->
+                        TransferRow(
+                            t,
+                            onCancel = if (t.active) ({ vm.cancel(t) }) else null,
+                            onRetry = if (filter == TransferFilter.ERRORED) ({ vm.retry(t) }) else null,
+                        )
+                    }
+                }
+                VerticalScrollbar(listState, Modifier.align(Alignment.CenterEnd))
             }
         }
+    }
+}
+
+@Composable
+private fun Empty(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, subtitle: String) {
+    Column(
+        Modifier.fillMaxSize().padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.size(112.dp)) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+            }
+        }
+        Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 24.dp))
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp),
+        )
     }
 }
 

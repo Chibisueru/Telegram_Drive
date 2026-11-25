@@ -15,6 +15,7 @@ storage costs nothing. Phones and computers signed in to the same account share 
   going with the screen off. The notification shows two bars: files done and the current file.
   The **Transfers** tab lists everything, with cancel and retry. Optional **Wi-Fi only** mode.
 - **App lock**: optional PIN, with fingerprint/face unlock. The PIN always works as a fallback.
+- **Upload a whole folder**: *New → Upload a folder* recreates the folder and all its subfolders.
 - **Share to the app**: "Share → Telegram Drive" from any app uploads files into a folder you pick.
 - **Select several items** (long-press) to download, move, favorite or delete them together.
 - **Trash**: deleted items can be restored for 30 days (with an instant Undo).
@@ -35,9 +36,10 @@ The same drive on your computer, with the same folders, favorites and trash:
   nothing else to install. 64-bit only. On Linux it needs glibc 2.34+ and OpenSSL 3
   (Ubuntu 22.04+, Debian 12+, Fedora 35+, current Arch).
 - **Drag and drop** files or whole folders onto the window to upload them (folders keep their
-  structure). Or use **Upload → Files…/Folder…**.
-- Desktop-style selection: click, **Ctrl**-click, **Shift**-click, **Ctrl+A**; right-click for
-  the menu; **Enter** opens, **Delete** trashes, **F2** renames, **Backspace** goes up.
+  structure, subfolders included). Or use **Upload → Files…/Folders…**.
+- Click opens a folder or file. Select with the checkbox that appears on hover, **Ctrl**-click,
+  **Shift**-click or **Ctrl+A**; right-click for the menu. **Delete** trashes, **F2** renames,
+  **Backspace** goes up.
 - **Viewer**: images (zoom with the mouse wheel, **←/→** to step through the folder) and text
   files open in the app. Videos, music, PDFs and other files are fetched once and opened in
   your default app.

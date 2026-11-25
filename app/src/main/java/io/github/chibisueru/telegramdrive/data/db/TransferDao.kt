@@ -47,4 +47,17 @@ interface TransferDao {
 
     @Query("DELETE FROM transfers WHERE state IN ('done', 'failed', 'cancelled')")
     suspend fun clearFinished()
+
+    /** Failed and cancelled transfers go back into the queue. */
+    @Query("UPDATE transfers SET state = 'queued', progress = 0, error = NULL WHERE state IN ('failed', 'cancelled')")
+    suspend fun requeueErrored()
+
+    @Query("SELECT * FROM transfers WHERE state IN ('failed', 'cancelled')")
+    suspend fun errored(): List<TransferEntity>
+
+    @Query("DELETE FROM transfers WHERE state IN ('failed', 'cancelled')")
+    suspend fun clearErrored()
+
+    @Query("DELETE FROM transfers WHERE state = 'done'")
+    suspend fun clearCompleted()
 }

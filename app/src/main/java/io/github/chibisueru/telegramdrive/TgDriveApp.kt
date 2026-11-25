@@ -72,13 +72,17 @@ class AppContainer(val context: Context) {
     val transferQueue = TransferQueue(scope, transfers, transferRunner, settings, network, TransferNotifications(context))
     val repository = DriveRepository(context, dao, files, settings, indexSync, transfers)
     val appLock = AppLock(scope, settings)
+    @Volatile private var currentChatId = 0L
 
     @get:OptIn(UnstableApi::class)
-    val mediaDataSourceFactory: TelegramDataSource.Factory by lazy { TelegramDataSource.Factory(dao, telegram) }
+    val mediaDataSourceFactory: TelegramDataSource.Factory by lazy { TelegramDataSource.Factory(dao, telegram, files) }
 
     init {
         // Reconnect with the saved Telegram session as soon as the process starts
         // (also when WorkManager starts it for a background transfer).
+        // TgFiles looks drive files up through their message in the drive channel.
+        scope.launch { settings.flow.collect { s -> currentChatId = s.chatId } }
+        files.chatId = { currentChatId }
         scope.launch {
             val s = settings.current()
             if (s.isConfigured) {

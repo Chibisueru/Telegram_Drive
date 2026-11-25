@@ -166,6 +166,25 @@ class BrowserViewModel(private val c: AppContainer) : ViewModel() {
         send("Uploading ${uris.size} file${if (uris.size == 1) "" else "s"}. Progress is in Transfers.")
     }
 
+    /** Uploads a whole folder (picked with the system folder picker), keeping its subfolders. */
+    fun uploadFolder(tree: Uri) = launchSafely {
+        val (folders, files) = repo.enqueueFolderUpload(tree, currentFolderId.value)
+        send("Uploading $files file${if (files == 1) "" else "s"} in $folders folder${if (folders == 1) "" else "s"}. Progress is in Transfers.")
+    }
+
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing
+
+    /** Pull to refresh: checks the channel for changes made on other devices. */
+    fun refresh() = viewModelScope.launch {
+        _refreshing.value = true
+        try {
+            runCatching { c.indexSync.refreshIfChanged() }
+        } finally {
+            _refreshing.value = false
+        }
+    }
+
     fun download(list: List<DriveItem>) = launchSafely {
         val files = list.filterIsInstance<DriveItem.File>()
         files.forEach { repo.enqueueDownload(it.file) }

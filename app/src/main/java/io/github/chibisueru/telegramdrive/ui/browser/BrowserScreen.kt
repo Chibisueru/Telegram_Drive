@@ -68,6 +68,11 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material.icons.filled.DriveFolderUpload
+import io.github.chibisueru.telegramdrive.ui.components.VerticalScrollbar
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -154,6 +159,15 @@ fun BrowserScreen(onOpenFile: (String) -> Unit) {
     }
 
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
+        if (tree != null) {
+            vm.uploadFolder(tree)
+            if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+    val refreshing by vm.refreshing.collectAsStateWithLifecycle()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         vm.upload(uris)
         if (uris.isNotEmpty() &&
@@ -311,23 +325,28 @@ fun BrowserScreen(onOpenFile: (String) -> Unit) {
             }
         },
     ) { padding ->
+        // Pull down to check for changes made on other devices right away.
+        PullToRefreshBox(isRefreshing = refreshing, onRefresh = vm::refresh, modifier = Modifier.padding(padding)) {
         AnimatedContent(
             targetState = Triple(folderId to special, searching, viewMode),
             transitionSpec = { fadeIn() togetherWith fadeOut() },
-            modifier = Modifier.padding(padding),
             label = "folder",
         ) { (_, _, mode) ->
             val list = items
             when {
                 list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 list.isEmpty() -> EmptyState(searching = searching, special = special)
-                mode == ViewMode.LIST || mode == ViewMode.COMPACT -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 96.dp)) {
-                    items(list, key = { it.id }) { item ->
-                        Selectable(item.id in selection) {
-                            if (mode == ViewMode.LIST) DriveListRow(item, onClick = { onClick(item) }, onMore = { actionsFor = item }, onLongClick = { onLongClick(item) })
-                            else DriveCompactRow(item, onClick = { onClick(item) }, onMore = { actionsFor = item }, onLongClick = { onLongClick(item) })
+                mode == ViewMode.LIST || mode == ViewMode.COMPACT -> Box(Modifier.fillMaxSize()) {
+                    val listState = rememberLazyListState()
+                    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 96.dp)) {
+                        items(list, key = { it.id }) { item ->
+                            Selectable(item.id in selection) {
+                                if (mode == ViewMode.LIST) DriveListRow(item, onClick = { onClick(item) }, onMore = { actionsFor = item }, onLongClick = { onLongClick(item) })
+                                else DriveCompactRow(item, onClick = { onClick(item) }, onMore = { actionsFor = item }, onLongClick = { onLongClick(item) })
+                            }
                         }
                     }
+                    VerticalScrollbar(listState, Modifier.align(Alignment.CenterEnd))
                 }
                 else -> {
                     val (cell, gap) = when (mode) {
@@ -335,7 +354,10 @@ fun BrowserScreen(onOpenFile: (String) -> Unit) {
                         ViewMode.LARGE_GRID -> 260.dp to 16.dp
                         else -> 160.dp to 12.dp
                     }
+                    val gridState = rememberLazyGridState()
+                    Box(Modifier.fillMaxSize()) {
                     LazyVerticalGrid(
+                        state = gridState,
                         columns = GridCells.Adaptive(cell),
                         contentPadding = PaddingValues(start = gap, end = gap, top = gap, bottom = 96.dp),
                         horizontalArrangement = Arrangement.spacedBy(gap),
@@ -349,8 +371,11 @@ fun BrowserScreen(onOpenFile: (String) -> Unit) {
                             }
                         }
                     }
+                    VerticalScrollbar(gridState, Modifier.align(Alignment.CenterEnd))
+                    }
                 }
             }
+        }
         }
     }
 
@@ -362,6 +387,11 @@ fun BrowserScreen(onOpenFile: (String) -> Unit) {
                     showCreateSheet = false
                     context.container.appLock.allowExternalActivity()
                     picker.launch(arrayOf("*/*"))
+                })
+                SheetAction(Icons.Default.DriveFolderUpload, "Upload a folder", onClick = {
+                    showCreateSheet = false
+                    context.container.appLock.allowExternalActivity()
+                    folderPicker.launch(null)
                 })
                 SheetAction(Icons.Default.CreateNewFolder, "New folder", onClick = {
                     showCreateSheet = false

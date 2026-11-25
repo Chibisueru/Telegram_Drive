@@ -18,7 +18,7 @@ class AppContainer {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settings = SettingsStore()
     val telegram = Telegram(scope)
-    val files = TgFiles(telegram)
+    val files = TgFiles(telegram).also { f -> f.chatId = { settings.current.chatId } }
     val drive = Drive(scope, telegram, files, settings)
     val transfers = Transfers(scope, drive, files, settings)
 
@@ -27,14 +27,14 @@ class AppContainer {
         if (s.isConfigured) telegram.resume(s.apiId, s.apiHash)
         scope.launch {
             var purged = false
-            // Pick up changes made on phones or other computers, once a minute.
+            // Pick up changes made on phones or other computers, every 30 seconds (new index posts trigger a refresh right away, see Drive).
             while (true) {
                 telegram.step.first { it is LoginStep.Ready }
                 if (settings.current.isConfigured) {
                     if (!purged) { purged = true; runCatching { drive.purgeOldTrash() } }
                     runCatching { drive.refreshIfChanged() }
                 }
-                delay(60_000)
+                delay(30_000)
             }
         }
     }

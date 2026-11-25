@@ -20,6 +20,18 @@ object Pickers {
         return dialog.files?.toList().orEmpty()
     }
 
+    /** One or more folders (Ctrl/Shift-click to pick several). */
+    fun pickFolders(title: String): List<File> {
+        val chooser = JFileChooser().apply {
+            dialogTitle = title
+            fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+            isMultiSelectionEnabled = true
+            isAcceptAllFileFilterUsed = false
+        }
+        if (chooser.showOpenDialog(owner) != JFileChooser.APPROVE_OPTION) return emptyList()
+        return chooser.selectedFiles.toList().ifEmpty { listOfNotNull(chooser.selectedFile) }
+    }
+
     fun pickFolder(title: String, start: File? = null): File? {
         val chooser = JFileChooser(start).apply {
             dialogTitle = title

@@ -114,6 +114,16 @@ class Transfers(
 
     fun clearFinished() = _list.update { list -> list.filter { it.active } }
 
+    private val TransferState.errored get() = this == TransferState.FAILED || this == TransferState.CANCELLED
+
+    fun retryAllErrored() {
+        _list.update { list -> list.map { if (it.state.errored) it.copy(state = TransferState.QUEUED, progress = 0f, error = null) else it } }
+        wake.trySend(Unit)
+    }
+
+    fun clearErrored() = _list.update { list -> list.filterNot { it.state.errored } }
+    fun clearCompleted() = _list.update { list -> list.filterNot { it.state == TransferState.DONE } }
+
     val activeCount get() = _list.value.count { it.active }
 
     private fun set(id: Long, change: (Transfer) -> Transfer) =
@@ -167,7 +177,7 @@ class Transfers(
     private suspend fun doDownload(t: Transfer): File {
         val f = drive.file(t.fileId!!) ?: error("The file no longer exists")
         try {
-            val cached = files.download(f.remoteId, priority = 16) { p -> set(t.id) { it.copy(progress = p * 0.97f) } }
+            val cached = files.download(f.remoteId, priority = 16, messageId = f.messageId) { p -> set(t.id) { it.copy(progress = p * 0.97f) } }
             return withContext(Dispatchers.IO) {
                 val dir = settings.current.downloadFolder.apply { mkdirs() }
                 val dest = uniqueFile(dir, f.name)

@@ -110,7 +110,7 @@ private fun ImagePage(file: FileEntity, onZoomChanged: (Boolean) -> Unit) {
     LaunchedEffect(file.id, attempt) {
         state = CacheState.Loading(0f)
         state = try {
-            CacheState.Ready(files.download(file.remoteId, priority = 32) { state = CacheState.Loading(it) })
+            CacheState.Ready(files.download(file.remoteId, priority = 32, messageId = file.messageId) { state = CacheState.Loading(it) })
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {

@@ -13,7 +13,13 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.delay
+import io.github.chibisueru.telegramdrive.desktop.telegram.LoginStep
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -62,6 +68,22 @@ class Drive(
 
     init {
         scope.launch { trigger.debounce(2_500).collect { runCatching { syncNow() } } }
+        // React right away when another device posts a new index into the channel.
+        scope.launch {
+            combine(telegram.step, settings.flow.map { it.chatId }.distinctUntilChanged()) { step, chat -> step to chat }
+                .collectLatest { (step, chatId) ->
+                    if (step !is LoginStep.Ready || chatId == 0L) return@collectLatest
+                    val client = runCatching { telegram.client }.getOrNull() ?: return@collectLatest
+                    runCatching { client.openChat(chatId) }
+                    client.newMessageUpdates.collect { u ->
+                        val m = u.message
+                        if (m.chatId == chatId && DriveProvisioner.isIndexMessage(m) && m.id != settings.current.indexMessageId) {
+                            delay(1_000)
+                            runCatching { refreshIfChanged() }
+                        }
+                    }
+                }
+        }
     }
 
     private fun load(): DriveIndex = runCatching { json.decodeFromString<DriveIndex>(indexFile.readText()) }.getOrDefault(DriveIndex())
@@ -266,7 +288,7 @@ class Drive(
     suspend fun restoreFromTelegram(): Boolean = syncMutex.withLock {
         val s = settings.current
         val client = telegram.awaitReady()
-        val messageId = DriveProvisioner.indexMessageId(client, s.chatId) ?: return@withLock false
+        val messageId = DriveProvisioner.latestIndexMessageId(client, s.chatId) ?: return@withLock false
         val remote = downloadIndex(s.chatId, messageId) ?: return@withLock false
         pendingFile.delete()
         replace(remote)
@@ -290,8 +312,8 @@ class Drive(
         runCatching { json.decodeFromString<DriveIndex>(baseFile.readText()) }.getOrDefault(DriveIndex())
 
     private suspend fun newerRemoteIndex(chatId: Long, known: Long): Pair<Long, DriveIndex>? {
-        val messageId = DriveProvisioner.indexMessageId(telegram.awaitReady(), chatId) ?: return null
-        if (messageId == known) return null
+        val messageId = DriveProvisioner.latestIndexMessageId(telegram.awaitReady(), chatId) ?: return null
+        if (messageId <= known) return null
         return downloadIndex(chatId, messageId)?.let { messageId to it }
     }
 
@@ -300,7 +322,7 @@ class Drive(
         val message = runCatching { client.getMessage(chatId, messageId).get() }.getOrNull() ?: return null
         val doc = (message.content as? MessageDocument)?.document ?: return null
         if (doc.fileName != DriveIndex.FILE_NAME) return null
-        val local = files.download(doc.document.remote.id, priority = 32)
+        val local = files.download(doc.document.remote.id, priority = 32, messageId = messageId)
         val idx = withContext(Dispatchers.IO) { runCatching { json.decodeFromString<DriveIndex>(local.readText()) }.getOrNull() }
         return idx?.takeIf { it.version == DriveIndex.FORMAT_VERSION }
     }

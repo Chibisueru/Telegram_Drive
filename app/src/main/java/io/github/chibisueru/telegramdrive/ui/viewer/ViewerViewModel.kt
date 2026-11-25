@@ -66,7 +66,7 @@ class ViewerViewModel(private val c: AppContainer, private val fileId: String) :
     /** Gets any file (e.g. the image currently on screen) as a local file, then calls [onReady]. */
     fun withLocalFile(entity: FileEntity, onReady: (File) -> Unit) = viewModelScope.launch {
         try {
-            onReady(c.files.download(entity.remoteId, priority = 32))
+            onReady(c.files.download(entity.remoteId, priority = 32, messageId = entity.messageId))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -110,7 +110,7 @@ class ViewerViewModel(private val c: AppContainer, private val fileId: String) :
         cacheJob = viewModelScope.launch {
             _cache.value = CacheState.Loading(0f)
             try {
-                val f = c.files.download(entity.remoteId, priority = 32) { _cache.value = CacheState.Loading(it) }
+                val f = c.files.download(entity.remoteId, priority = 32, messageId = entity.messageId) { _cache.value = CacheState.Loading(it) }
                 _cache.value = CacheState.Ready(f)
                 onReady?.invoke(f)
             } catch (e: kotlinx.coroutines.CancellationException) {

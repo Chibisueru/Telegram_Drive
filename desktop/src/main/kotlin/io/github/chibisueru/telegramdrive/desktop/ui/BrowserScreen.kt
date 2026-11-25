@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
@@ -48,6 +49,12 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -64,6 +71,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.TooltipArea
+import androidx.compose.foundation.VerticalScrollbar
+import androidx.compose.foundation.rememberScrollbarAdapter
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.ui.input.pointer.isCtrlPressed as isCtrlDown
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.runtime.Composable
@@ -117,8 +129,6 @@ fun BrowserScreen(c: AppContainer, state: BrowserState) {
     var moving by remember { mutableStateOf<List<DriveItem>?>(null) }
     var deleting by remember { mutableStateOf<List<DriveItem>?>(null) }
     var emptyingTrash by remember { mutableStateOf(false) }
-    var lastClickId by remember { mutableStateOf<String?>(null) }
-    var lastClickAt by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(state.message) {
         val m = state.message ?: return@LaunchedEffect
@@ -128,10 +138,18 @@ fun BrowserScreen(c: AppContainer, state: BrowserState) {
     }
     LaunchedEffect(Unit) { focus.requestFocus() }
 
+    fun toggle(item: DriveItem) {
+        state.selection = if (item.id in state.selection) state.selection - item.id else state.selection + item.id
+        state.anchor = item.id
+    }
+
+    /**
+     * Click opens (folders and files). Ctrl-click and the hover checkbox select; Shift-click
+     * selects a range; while anything is selected, clicks add or remove items.
+     */
     fun click(item: DriveItem) {
         focus.requestFocus()
         val mods = windowInfo.keyboardModifiers
-        val now = System.currentTimeMillis()
         when {
             mods.isCtrlDown -> {
                 state.selection = if (item.id in state.selection) state.selection - item.id else state.selection + item.id
@@ -142,17 +160,9 @@ fun BrowserScreen(c: AppContainer, state: BrowserState) {
                 val b = items.indexOf(item)
                 if (a >= 0 && b >= 0) state.selection = items.subList(minOf(a, b), maxOf(a, b) + 1).map { it.id }.toSet()
             }
-            lastClickId == item.id && now - lastClickAt < 450 -> {
-                state.selection = emptySet()
-                state.open(item, items)
-            }
-            else -> {
-                state.selection = setOf(item.id)
-                state.anchor = item.id
-            }
+            state.selection.isNotEmpty() -> toggle(item)
+            else -> state.open(item, items)
         }
-        lastClickId = item.id
-        lastClickAt = now
     }
 
     fun targets(item: DriveItem) = if (item.id in state.selection) selected else listOf(item)
@@ -223,6 +233,7 @@ fun BrowserScreen(c: AppContainer, state: BrowserState) {
                     shape = RoundedCornerShape(28.dp),
                     modifier = Modifier.width(260.dp),
                 )
+                Action(Icons.Filled.Refresh, "Check for changes from other devices") { c.refreshSoon() }
                 ViewMenu(settings.viewMode) { m -> c.settings.update { it.copy(viewMode = m) } }
                 if (state.special != Special.RECENT && !inTrash) SortMenu(state.sortOf(settings), state::setSort)
                 if (state.special == null && !state.searching) {
@@ -231,7 +242,7 @@ fun BrowserScreen(c: AppContainer, state: BrowserState) {
                     }
                     UploadButton(
                         onFiles = { Pickers.pickFiles().takeIf { it.isNotEmpty() }?.let { upload(c, state, it) } },
-                        onFolder = { Pickers.pickFolder("Upload a folder")?.let { upload(c, state, listOf(it)) } },
+                        onFolder = { Pickers.pickFolders("Upload folders (with everything inside)").takeIf { it.isNotEmpty() }?.let { upload(c, state, it) } },
                     )
                 }
             }
@@ -292,27 +303,32 @@ fun BrowserScreen(c: AppContainer, state: BrowserState) {
                 } else when (settings.viewMode) {
                     ViewMode.LIST, ViewMode.COMPACT -> {
                         val compact = settings.viewMode == ViewMode.COMPACT
-                        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 24.dp)) {
+                        val listState = rememberLazyListState()
+                        VerticalScrollbar(rememberScrollbarAdapter(listState), Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp))
+                        LazyColumn(Modifier.fillMaxSize().padding(end = 10.dp), state = listState, contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 24.dp)) {
                             item { ListHeader(showLocation = false) }
                             items(items, key = { it.id }) { item ->
                                 ContextMenuArea(items = { menuFor(item) }) {
-                                    ListRow(c, item, item.id in state.selection, compact, inTrash) { click(item) }
+                                    ListRow(c, item, item.id in state.selection, compact, inTrash, state.selection.isNotEmpty(), { toggle(item) }) { click(item) }
                                 }
                             }
                         }
                     }
                     ViewMode.GRID, ViewMode.LARGE_GRID -> {
                         val large = settings.viewMode == ViewMode.LARGE_GRID
+                        val gridState = rememberLazyGridState()
+                        VerticalScrollbar(rememberScrollbarAdapter(gridState), Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(end = 2.dp))
                         LazyVerticalGrid(
                             GridCells.Adaptive(if (large) 220.dp else 150.dp),
-                            Modifier.fillMaxSize(),
+                            Modifier.fillMaxSize().padding(end = 10.dp),
+                            state = gridState,
                             contentPadding = PaddingValues(16.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             items(items, key = { it.id }) { item ->
                                 ContextMenuArea(items = { menuFor(item) }) {
-                                    GridCell(c, item, item.id in state.selection) { click(item) }
+                                    GridCell(c, item, item.id in state.selection, state.selection.isNotEmpty(), { toggle(item) }) { click(item) }
                                 }
                             }
                         }
@@ -433,7 +449,7 @@ private fun UploadButton(onFiles: () -> Unit, onFolder: () -> Unit) {
         DropdownMenu(open, { open = false }) {
             DropdownMenuItem(text = { Text("Files…") }, onClick = { open = false; onFiles() },
                 leadingIcon = { Icon(Icons.Filled.Upload, null) })
-            DropdownMenuItem(text = { Text("Folder…") }, onClick = { open = false; onFolder() },
+            DropdownMenuItem(text = { Text("Folders…") }, onClick = { open = false; onFolder() },
                 leadingIcon = { Icon(Icons.Outlined.FolderOpen, null) })
         }
     }
@@ -457,14 +473,29 @@ private fun HeaderText(text: String, modifier: Modifier) =
     Text(text, modifier, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
 @Composable
-private fun ListRow(c: AppContainer, item: DriveItem, selected: Boolean, compact: Boolean, inTrash: Boolean, onClick: () -> Unit) {
-    val bg = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
+private fun ListRow(
+    c: AppContainer, item: DriveItem, selected: Boolean, compact: Boolean, inTrash: Boolean,
+    selecting: Boolean, onToggle: () -> Unit, onClick: () -> Unit,
+) {
+    val hover = remember { MutableInteractionSource() }
+    val hovered by hover.collectIsHoveredAsState()
+    val bg = when {
+        selected -> MaterialTheme.colorScheme.secondaryContainer
+        hovered -> MaterialTheme.colorScheme.surfaceContainerHigh
+        else -> MaterialTheme.colorScheme.surface
+    }
     Row(
         Modifier.fillMaxWidth().height(if (compact) 36.dp else 52.dp).clip(RoundedCornerShape(10.dp)).background(bg)
-            .clickable(onClick = onClick).padding(horizontal = 16.dp),
+            .hoverable(hover).clickable(onClick = onClick).pointerHoverIcon(PointerIcon.Hand).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.width(48.dp)) { ItemIcon(c, item, if (compact) 22.dp else 34.dp) }
+        Box(Modifier.width(48.dp)) {
+            if (hovered || selecting) {
+                Checkbox(selected, { onToggle() }, Modifier.size(if (compact) 22.dp else 34.dp))
+            } else {
+                ItemIcon(c, item, if (compact) 22.dp else 34.dp)
+            }
+        }
         Text(item.name, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
             style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge)
         if (item.starred) Icon(Icons.Filled.Star, "Favorite", Modifier.padding(horizontal = 8.dp).size(16.dp), tint = MaterialTheme.colorScheme.tertiary)
@@ -495,11 +526,17 @@ private fun ItemIcon(c: AppContainer, item: DriveItem, size: androidx.compose.ui
 }
 
 @Composable
-private fun GridCell(c: AppContainer, item: DriveItem, selected: Boolean, onClick: () -> Unit) {
+private fun GridCell(c: AppContainer, item: DriveItem, selected: Boolean, selecting: Boolean, onToggle: () -> Unit, onClick: () -> Unit) {
+    val hover = remember { MutableInteractionSource() }
+    val hovered by hover.collectIsHoveredAsState()
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick),
+        color = when {
+            selected -> MaterialTheme.colorScheme.secondaryContainer
+            hovered -> MaterialTheme.colorScheme.surfaceContainerHigh
+            else -> MaterialTheme.colorScheme.surfaceContainerLow
+        },
+        modifier = Modifier.clip(RoundedCornerShape(16.dp)).hoverable(hover).clickable(onClick = onClick).pointerHoverIcon(PointerIcon.Hand),
     ) {
         Column {
             Box(
@@ -515,6 +552,10 @@ private fun GridCell(c: AppContainer, item: DriveItem, selected: Boolean, onClic
                 }
                 if (item.starred) Icon(Icons.Filled.Star, "Favorite", Modifier.align(Alignment.TopEnd).padding(6.dp).size(18.dp),
                     tint = MaterialTheme.colorScheme.tertiary)
+                if (hovered || selecting) Surface(
+                    shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                    modifier = Modifier.align(Alignment.TopStart).padding(4.dp),
+                ) { Checkbox(selected, { onToggle() }) }
             }
             Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp)) {
                 Text(item.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium,
