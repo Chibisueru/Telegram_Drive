@@ -25,9 +25,16 @@ jobs:
         with: { distribution: temurin, java-version: '21' }
       - uses: gradle/actions/setup-gradle@v5
       - name: Install packaging tools
-        run: sudo apt-get update && sudo apt-get install -y rpm fakeroot
+        run: sudo apt-get update && sudo apt-get install -y rpm ffmpeg
       - name: Build app image
-        run: ./gradlew -PdesktopOnly=true :desktop:test :desktop:createDistributable
+        run: |
+          desktop/make-media-samples.sh
+          ./gradlew -PdesktopOnly=true :desktop:test :desktop:createDistributable
+      - name: Check the packaged app's built-in players
+        run: |
+          m=desktop/build/media-samples
+          desktop/build/compose/binaries/main/app/TelegramDrive/bin/TelegramDrive --selftest-media \
+            $m/tone.mp3 $m/tone.flac $m/tone.opus $m/tone.ogg $m/tone.m4a $m/video.mp4 $m/video.webm $m/video.mkv
       - name: Build .deb and .rpm
         run: |
           version=$(grep '^app.versionName=' gradle.properties | cut -d= -f2)
@@ -51,6 +58,7 @@ jobs:
           useradd -m builder
           mkdir /build
           cp packaging/arch/* linux/TelegramDrive-linux-x64.tar.gz /build/
+          tar -C packaging/linux -czf /build/icons.tar.gz icons
           sed -i "s/^pkgver=.*/pkgver=$(grep '^app.versionName=' gradle.properties | cut -d= -f2)/" /build/PKGBUILD
           chown -R builder /build
           su builder -c "cd /build && makepkg --nodeps --force"

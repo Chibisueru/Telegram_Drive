@@ -48,20 +48,36 @@ class ViewerViewModel(private val c: AppContainer, private val fileId: String) :
     fun markOpened(id: String) = viewModelScope.launch { c.repository.markOpened(id) }
 
     /**
-     * The images in the opened image's folder, in that folder's sort order, so the viewer can
-     * swipe between them. Null until loaded (or when the opened file isn't an image).
+     * The files you can step through from the opened one, from its folder in that folder's sort
+     * order: photos and videos (swipe between them), or the music (the play queue).
+     * Null until loaded, or when the opened file is neither.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     val gallery: StateFlow<List<FileEntity>?> = file
-        .map { it?.takeIf { f -> f.deletedAt == null && kindOf(f.mimeType, f.name) == FileKind.IMAGE } }
-        .distinctUntilChangedBy { it?.folderId to (it == null) }
+        .map { it?.takeIf { f -> f.deletedAt == null && groupOf(f) != null } }
+        .distinctUntilChangedBy { it?.folderId to (it?.let(::groupOf)) }
         .flatMapLatest { opened ->
             if (opened == null) flowOf(null)
             else combine(c.dao.filesIn(opened.folderId), c.settings.flow) { files, s ->
-                sortFiles(files.filter { kindOf(it.mimeType, it.name) == FileKind.IMAGE }, s.sortFor(folderSortKey(opened.folderId)))
+                val group = groupOf(opened)
+                sortFiles(files.filter { groupOf(it) == group }, s.sortFor(folderSortKey(opened.folderId)))
             }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private fun groupOf(f: FileEntity): String? = when (kindOf(f.mimeType, f.name)) {
+        FileKind.IMAGE, FileKind.VIDEO -> "media"
+        FileKind.AUDIO -> "music"
+        else -> null
+    }
+
+    /** Starts the folder's music at the opened track, unless it's already the one playing. */
+    fun playMusic(tracks: List<FileEntity>, startId: String) {
+        if (c.music.state.value.current?.fileId == startId) return
+        c.music.play(tracks.ifEmpty { listOfNotNull(file.value) }, startId)
+    }
+
+    val music get() = c.music
 
     /** Gets any file (e.g. the image currently on screen) as a local file, then calls [onReady]. */
     fun withLocalFile(entity: FileEntity, onReady: (File) -> Unit) = viewModelScope.launch {
@@ -81,23 +97,40 @@ class ViewerViewModel(private val c: AppContainer, private val fileId: String) :
     private val _events = Channel<String>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
 
-    /** Kept here (not in the composable) so playback survives rotation and fullscreen toggles. */
+    /**
+     * One video player, moved to whichever video page is on screen. Kept here (not in the
+     * composable) so playback survives rotation and fullscreen toggles.
+     */
     private var _player: ExoPlayer? = null
+    private var streamingRemoteId: String? = null
 
     @OptIn(UnstableApi::class)
-    fun player(entity: FileEntity): ExoPlayer = _player ?: ExoPlayer.Builder(c.context)
+    private fun videoPlayer(): ExoPlayer = _player ?: ExoPlayer.Builder(c.context)
         .setMediaSourceFactory(DefaultMediaSourceFactory(c.mediaDataSourceFactory))
+        .setAudioAttributes(
+            androidx.media3.common.AudioAttributes.Builder()
+                .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+                .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MOVIE).build(),
+            /* handleAudioFocus = */ true, // pauses the music player while a video plays
+        )
         .build()
-        .also { p ->
-            val item = MediaItem.Builder()
-                .setUri(TelegramDataSource.uriFor(entity.id))
-                .setMimeType(entity.mimeType.takeIf { it.startsWith("video/") || it.startsWith("audio/") })
-                .build()
-            p.setMediaItem(item)
+        .also { _player = it }
+
+    /** Loads [entity] into the video player (if it isn't already) and starts it. */
+    fun showVideo(entity: FileEntity): ExoPlayer {
+        val p = videoPlayer()
+        if (p.currentMediaItem?.mediaId != entity.id) {
+            // Stop fetching the video we swiped away from.
+            streamingRemoteId?.takeIf { it != entity.remoteId }?.let { old -> c.scope.launch { c.files.cancelDownload(old) } }
+            streamingRemoteId = entity.remoteId
+            p.setMediaItem(MediaItem.Builder().setMediaId(entity.id).setUri(TelegramDataSource.uriFor(entity.id)).build())
             p.prepare()
-            p.playWhenReady = true
-            _player = p
         }
+        p.playWhenReady = true
+        return p
+    }
+
+    fun pauseVideo() { _player?.pause() }
 
     /** Downloads the file to the cache for viewers that need the whole file (images, PDF, text). */
     fun ensureCached(onReady: ((File) -> Unit)? = null) {
@@ -131,12 +164,10 @@ class ViewerViewModel(private val c: AppContainer, private val fileId: String) :
 
     override fun onCleared() {
         _player?.release()
-        // Stop downloading what the user no longer looks at (finished files stay cached).
-        val streaming = _player != null
         _player = null
+        // Stop downloading what the user no longer looks at (finished files stay cached).
+        streamingRemoteId?.let { id -> c.scope.launch { c.files.cancelDownload(id) } }
         val remoteId = file.value?.remoteId
-        if (remoteId != null && (streaming || cacheJob?.isActive == true)) {
-            c.scope.launch { c.files.cancelDownload(remoteId) }
-        }
+        if (remoteId != null && cacheJob?.isActive == true) c.scope.launch { c.files.cancelDownload(remoteId) }
     }
 }

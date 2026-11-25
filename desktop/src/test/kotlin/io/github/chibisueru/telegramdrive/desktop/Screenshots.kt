@@ -49,7 +49,10 @@ fun main(args: Array<String>) {
         scene.close()
         println("wrote $name.png")
     }
+    kotlinx.coroutines.runBlocking { io.github.chibisueru.telegramdrive.desktop.ui.SystemLookWatcher.refresh() }
+    println("system look: " + io.github.chibisueru.telegramdrive.desktop.ui.SystemLookWatcher.look.value)
     if (configured) {
+        shot("files-system", 0)
         shot("files-light", 1)
         shot("files-grid-dark", 2) { c.settings.update { it.copy(viewMode = ViewMode.GRID) } }
         c.settings.update { it.copy(viewMode = ViewMode.LIST) }

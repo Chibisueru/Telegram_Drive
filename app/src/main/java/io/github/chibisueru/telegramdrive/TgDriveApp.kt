@@ -72,6 +72,8 @@ class AppContainer(val context: Context) {
     val transferQueue = TransferQueue(scope, transfers, transferRunner, settings, network, TransferNotifications(context))
     val repository = DriveRepository(context, dao, files, settings, indexSync, transfers)
     val appLock = AppLock(scope, settings)
+    /** The built-in music player (playback runs in MusicService). */
+    val music by lazy { io.github.chibisueru.telegramdrive.player.Music(context) }
     @Volatile private var currentChatId = 0L
 
     @get:OptIn(UnstableApi::class)

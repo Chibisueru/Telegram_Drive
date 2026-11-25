@@ -12,6 +12,9 @@ private val textExtensions = setOf(
     "kt", "kts", "java", "py", "js", "ts", "c", "h", "cpp", "rs", "go", "sh", "html", "css", "sql", "gradle", "toml",
 )
 private val archiveExtensions = setOf("zip", "rar", "7z", "tar", "gz", "bz2", "xz", "zst")
+/** Formats the built-in music player plays (Android's decoders). */
+val audioExtensions = setOf("mp3", "flac", "opus", "ogg", "oga", "m4a", "m4b", "aac", "wav", "wave", "alac", "aif", "aiff", "mka", "amr", "3ga", "weba", "mid", "midi")
+private val videoExtensions = setOf("mp4", "m4v", "mkv", "webm", "mov", "3gp", "avi", "ts")
 
 fun extensionOf(name: String) = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
 
@@ -27,6 +30,9 @@ fun kindOf(mime: String, name: String): FileKind {
         mime.startsWith("image/") -> FileKind.IMAGE
         mime.startsWith("video/") -> FileKind.VIDEO
         mime.startsWith("audio/") -> FileKind.AUDIO
+        // Files uploaded with a generic type ("application/octet-stream", "application/ogg").
+        ext in audioExtensions -> FileKind.AUDIO
+        ext in videoExtensions -> FileKind.VIDEO
         mime == "application/pdf" -> FileKind.PDF
         mime == "application/vnd.android.package-archive" -> FileKind.APK
         mime.startsWith("text/") || mime == "application/json" || mime == "application/xml" ||

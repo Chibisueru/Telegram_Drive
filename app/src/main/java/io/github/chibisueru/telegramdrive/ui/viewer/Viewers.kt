@@ -20,6 +20,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.input.pointer.positionChanged
 import io.github.chibisueru.telegramdrive.container
 import io.github.chibisueru.telegramdrive.data.db.FileEntity
+import io.github.chibisueru.telegramdrive.util.FileKind
+import io.github.chibisueru.telegramdrive.util.kindOf
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,11 +72,17 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Swipe left/right between the images of a folder. Neighbouring images are loaded ahead of
- * time; swiping is disabled while the current image is zoomed in, so dragging pans instead.
+ * Swipe left/right between the photos and videos of a folder. Neighbouring images are loaded
+ * ahead of time; swiping is disabled while the current image is zoomed in, so dragging pans.
+ * [videoPage] draws a video page; `current` is true for the page on screen.
  */
 @Composable
-fun ImagePager(images: List<FileEntity>, initialId: String, onPageChanged: (FileEntity) -> Unit) {
+fun MediaPager(
+    images: List<FileEntity>,
+    initialId: String,
+    onPageChanged: (FileEntity) -> Unit,
+    videoPage: @Composable (file: FileEntity, current: Boolean) -> Unit,
+) {
     val start = remember { images.indexOfFirst { it.id == initialId }.coerceAtLeast(0) }
     val pagerState = rememberPagerState(initialPage = start) { images.size }
     var zoomed by remember { mutableStateOf(false) }
@@ -93,7 +101,11 @@ fun ImagePager(images: List<FileEntity>, initialId: String, onPageChanged: (File
         modifier = Modifier.fillMaxSize().background(Color.Black),
     ) { page ->
         val file = images[page]
-        ImagePage(file, onZoomChanged = { if (page == pagerState.currentPage) zoomed = it })
+        if (kindOf(file.mimeType, file.name) == FileKind.VIDEO) {
+            videoPage(file, page == pagerState.currentPage)
+        } else {
+            ImagePage(file, onZoomChanged = { if (page == pagerState.currentPage) zoomed = it })
+        }
     }
 }
 

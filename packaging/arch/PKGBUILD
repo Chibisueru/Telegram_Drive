@@ -2,7 +2,7 @@
 # Repackages the prebuilt app image (bundled Java runtime included) made by
 # `./gradlew :desktop:createDistributable`, which CI tars up as TelegramDrive-linux-x64.tar.gz.
 pkgname=telegram-drive
-pkgver=1.1.1
+pkgver=1.1.2
 pkgrel=1
 pkgdesc="Cloud drive that stores your files in your own Telegram account"
 arch=('x86_64')
@@ -11,7 +11,7 @@ license=('LicenseRef-unknown')
 depends=('glibc' 'gcc-libs' 'openssl' 'zlib' 'fontconfig' 'freetype2' 'libx11' 'libxext' 'libxi' 'libxrender' 'libxtst' 'alsa-lib' 'hicolor-icon-theme')
 optdepends=('xdg-utils: open files with their default app')
 options=('!strip' '!debug')
-source=("TelegramDrive-linux-x64.tar.gz" "telegram-drive.desktop" "telegram-drive.png")
+source=("TelegramDrive-linux-x64.tar.gz" "telegram-drive.desktop" "icons.tar.gz")
 sha256sums=('SKIP' 'SKIP' 'SKIP')
 
 package() {
@@ -20,5 +20,7 @@ package() {
   install -d "$pkgdir/usr/bin"
   ln -s /opt/telegram-drive/bin/TelegramDrive "$pkgdir/usr/bin/telegram-drive"
   install -Dm644 "$srcdir/telegram-drive.desktop" "$pkgdir/usr/share/applications/telegram-drive.desktop"
-  install -Dm644 "$srcdir/telegram-drive.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/telegram-drive.png"
+  for dir in "$srcdir"/icons/*/; do
+    install -Dm644 "$dir/telegram-drive.png" "$pkgdir/usr/share/icons/hicolor/$(basename "$dir")/apps/telegram-drive.png"
+  done
 }

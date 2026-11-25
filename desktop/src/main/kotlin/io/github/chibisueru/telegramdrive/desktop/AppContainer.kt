@@ -21,6 +21,9 @@ class AppContainer {
     val files = TgFiles(telegram).also { f -> f.chatId = { settings.current.chatId } }
     val drive = Drive(scope, telegram, files, settings)
     val transfers = Transfers(scope, drive, files, settings)
+    /** Feeds the built-in players straight from Telegram. */
+    val stream = io.github.chibisueru.telegramdrive.desktop.media.StreamServer(telegram, files)
+    val music = io.github.chibisueru.telegramdrive.desktop.media.Music(scope, stream)
 
     init {
         val s = settings.current

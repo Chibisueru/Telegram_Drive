@@ -8,4 +8,4 @@ Icon=telegram-drive
 Terminal=false
 Categories=Network;FileTransfer;
 Keywords=cloud;drive;telegram;storage;backup;
-StartupWMClass=telegram-drive-TelegramDrive
+StartupWMClass=telegram-drive

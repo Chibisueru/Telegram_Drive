@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -64,6 +65,7 @@ import io.github.chibisueru.telegramdrive.desktop.ui.UiMessage
 import io.github.chibisueru.telegramdrive.desktop.ui.Viewer
 import io.github.chibisueru.telegramdrive.desktop.ui.upload
 import java.awt.Dimension
+import kotlinx.coroutines.launch
 import java.awt.datatransfer.DataFlavor
 import java.awt.dnd.DnDConstants
 import java.awt.dnd.DropTarget
@@ -81,10 +83,13 @@ enum class Tab(val label: String, val selectedIcon: ImageVector, val icon: Image
     SETTINGS("Settings", Icons.Filled.Settings, Icons.Outlined.Settings),
 }
 
-fun main() {
+fun main(args: Array<String>) {
+    // `TelegramDrive --selftest-media <file or URL>`: checks the built-in player decodes it (muted).
+    if (args.firstOrNull() == "--selftest-media") return mediaSelfTest(args.drop(1))
     AppDirs.ensure()
-    setLinuxWindowClass("telegram-drive-TelegramDrive")
+    setLinuxWindowClass("telegram-drive")
     val c = AppContainer()
+    io.github.chibisueru.telegramdrive.desktop.ui.SystemLookWatcher.start(c.scope)
     val icon = AppContainer::class.java.getResourceAsStream("/icon.png")?.use {
         BitmapPainter(org.jetbrains.skia.Image.makeFromEncoded(it.readBytes()).toComposeImageBitmap())
     }
@@ -105,7 +110,10 @@ fun main() {
                 window.minimumSize = Dimension(820, 560)
                 Pickers.owner = window
                 val focusListener = object : WindowAdapter() {
-                    override fun windowGainedFocus(e: WindowEvent?) = c.refreshSoon()
+                    override fun windowGainedFocus(e: WindowEvent?) {
+                        c.refreshSoon()
+                        c.scope.launch { io.github.chibisueru.telegramdrive.desktop.ui.SystemLookWatcher.refresh() }
+                    }
                 }
                 window.addWindowFocusListener(focusListener)
                 // Drop files or folders from the file manager onto the window to upload them.
@@ -127,7 +135,17 @@ fun main() {
                 onDispose { window.removeWindowFocusListener(focusListener) }
             }
 
-            TgDriveTheme(settings.themeMode) {
+            val fullscreenControl = remember(windowState) {
+                io.github.chibisueru.telegramdrive.desktop.ui.FullscreenControl(
+                    isFullscreen = { windowState.placement == androidx.compose.ui.window.WindowPlacement.Fullscreen },
+                    set = { on ->
+                        windowState.placement = if (on) androidx.compose.ui.window.WindowPlacement.Fullscreen
+                        else androidx.compose.ui.window.WindowPlacement.Floating
+                    },
+                )
+            }
+            androidx.compose.runtime.CompositionLocalProvider(io.github.chibisueru.telegramdrive.desktop.ui.LocalFullscreen provides fullscreenControl) {
+            TgDriveTheme(settings.themeMode, settings.systemAccent) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     App(c, browser)
                     if (dragging) DropOverlay()
@@ -137,6 +155,7 @@ fun main() {
                     "${c.transfers.activeCount} transfer(s) are still running and will be cancelled.",
                     "Quit", { askQuit = false },
                 ) { exitApplication() }
+            }
             }
         }
     }
@@ -155,7 +174,8 @@ internal fun App(c: AppContainer, browser: BrowserState) {
     val transfers by c.transfers.list.collectAsState()
     val active = transfers.count { it.active }
 
-    Box(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
+    Box(Modifier.weight(1f).fillMaxWidth()) {
         Row(Modifier.fillMaxSize()) {
             NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxHeight()) {
                 Spacer(Modifier.size(12.dp))
@@ -197,6 +217,12 @@ internal fun App(c: AppContainer, browser: BrowserState) {
             )
         }
     }
+    // Mini player while music plays; click it to open the full player.
+    io.github.chibisueru.telegramdrive.desktop.ui.MiniPlayer(c.music) {
+        val s = c.music.state.value
+        s.current?.let { browser.viewing = it to s.queue }
+    }
+    }
 }
 
 @Composable
@@ -215,8 +241,8 @@ private fun DropOverlay() {
 
 /**
  * On Linux the dock matches windows to their .desktop file by WM_CLASS; Java's default is the
- * main class name, which would show a generic icon. The .deb/.rpm menu entry made by jpackage is
- * named "<package>-<app>.desktop"; the Arch one sets StartupWMClass to the same value.
+ * main class name, which would show a generic icon. All Linux packages install
+ * telegram-drive.desktop with StartupWMClass=telegram-drive.
  */
 private fun setLinuxWindowClass(name: String) {
     if (AppDirs.isWindows) return
@@ -226,4 +252,22 @@ private fun setLinuxWindowClass(name: String) {
         field.isAccessible = true
         field.set(toolkit, name)
     }
+}
+
+private fun mediaSelfTest(targets: List<String>) {
+    var failed = false
+    for (t in targets) {
+        val video = t.substringAfterLast('.').lowercase() in setOf("mp4", "mkv", "webm", "mov", "avi", "m4v")
+        val engine = io.github.chibisueru.telegramdrive.desktop.media.MediaEngine(t, withVideo = video)
+        engine.setVolume(0f)
+        engine.play()
+        val deadline = System.currentTimeMillis() + 10_000
+        while (System.currentTimeMillis() < deadline && engine.state.value.positionMs < 1_000 && engine.state.value.error == null) Thread.sleep(50)
+        val s = engine.state.value
+        val ok = s.error == null && s.positionMs >= 1_000 && (!video || s.frame != null)
+        if (!ok) failed = true
+        println("${if (ok) "OK  " else "FAIL"} $t duration=${s.durationMs}ms position=${s.positionMs}ms frame=${s.frame != null} title=${s.title} video=${s.videoWidth}x${s.videoHeight} error=${s.error}")
+        engine.close()
+    }
+    kotlin.system.exitProcess(if (failed) 1 else 0)
 }

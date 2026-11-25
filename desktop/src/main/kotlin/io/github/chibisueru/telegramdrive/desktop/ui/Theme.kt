@@ -4,7 +4,13 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import com.materialkolor.hct.Hct
+import com.materialkolor.scheme.SchemeTonalSpot
 import androidx.compose.ui.graphics.Color
 
 // Same palette as the Android app (seed #1F5FBF).
@@ -40,12 +46,47 @@ private val DarkColors = darkColorScheme(
     outline = Color(0xFF8E9099), outlineVariant = Color(0xFF44474E),
 )
 
+/**
+ * [themeMode]: 0 follows the desktop's dark/light setting, 1 light, 2 dark.
+ * [systemAccent]: build the colors from the desktop's accent color (like Material You on
+ * Android); falls back to the app's own blue when the desktop doesn't have one.
+ */
 @Composable
-fun TgDriveTheme(themeMode: Int, content: @Composable () -> Unit) {
+fun TgDriveTheme(themeMode: Int, systemAccent: Boolean = true, content: @Composable () -> Unit) {
+    val look by SystemLookWatcher.look.collectAsState()
     val dark = when (themeMode) {
         1 -> false
         2 -> true
-        else -> isSystemInDarkTheme()
+        else -> look.dark ?: isSystemInDarkTheme()
     }
-    MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, content = content)
+    val accent = look.accent.takeIf { systemAccent }
+    val scheme = remember(accent, dark) { accent?.let { schemeFrom(it, dark) } ?: if (dark) DarkColors else LightColors }
+    MaterialTheme(colorScheme = scheme, content = content)
+}
+
+/** A full Material 3 color scheme generated from one seed color (the "tonal spot" style Android uses). */
+fun schemeFrom(seed: Int, dark: Boolean): ColorScheme {
+    val s = SchemeTonalSpot(Hct.fromInt(seed), dark, 0.0)
+    fun c(argb: Int) = Color(argb)
+    return (if (dark) darkColorScheme() else lightColorScheme()).copy(
+        primary = c(s.primary), onPrimary = c(s.onPrimary),
+        primaryContainer = c(s.primaryContainer), onPrimaryContainer = c(s.onPrimaryContainer),
+        inversePrimary = c(s.inversePrimary),
+        secondary = c(s.secondary), onSecondary = c(s.onSecondary),
+        secondaryContainer = c(s.secondaryContainer), onSecondaryContainer = c(s.onSecondaryContainer),
+        tertiary = c(s.tertiary), onTertiary = c(s.onTertiary),
+        tertiaryContainer = c(s.tertiaryContainer), onTertiaryContainer = c(s.onTertiaryContainer),
+        background = c(s.background), onBackground = c(s.onBackground),
+        surface = c(s.surface), onSurface = c(s.onSurface),
+        surfaceVariant = c(s.surfaceVariant), onSurfaceVariant = c(s.onSurfaceVariant),
+        surfaceTint = c(s.surfaceTint),
+        inverseSurface = c(s.inverseSurface), inverseOnSurface = c(s.inverseOnSurface),
+        error = c(s.error), onError = c(s.onError),
+        errorContainer = c(s.errorContainer), onErrorContainer = c(s.onErrorContainer),
+        outline = c(s.outline), outlineVariant = c(s.outlineVariant), scrim = c(s.scrim),
+        surfaceBright = c(s.surfaceBright), surfaceDim = c(s.surfaceDim),
+        surfaceContainer = c(s.surfaceContainer), surfaceContainerHigh = c(s.surfaceContainerHigh),
+        surfaceContainerHighest = c(s.surfaceContainerHighest), surfaceContainerLow = c(s.surfaceContainerLow),
+        surfaceContainerLowest = c(s.surfaceContainerLowest),
+    )
 }

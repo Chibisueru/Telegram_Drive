@@ -16,6 +16,10 @@ storage costs nothing. Phones and computers signed in to the same account share 
   The **Transfers** tab lists everything, with cancel and retry. Optional **Wi-Fi only** mode.
 - **App lock**: optional PIN, with fingerprint/face unlock. The PIN always works as a fallback.
 - **Upload a whole folder**: *New → Upload a folder* recreates the folder and all its subfolders.
+- **Music player**: tap a music file for a full player with cover art and tags, the folder's
+  music as a queue, shuffle and repeat. It keeps playing in the background with lock-screen and
+  notification controls, and a mini player sits above the tabs.
+- **Photos and videos swipe together**: swipe from a photo to a video and on, in the folder's order.
 - **Share to the app**: "Share → Telegram Drive" from any app uploads files into a folder you pick.
 - **Select several items** (long-press) to download, move, favorite or delete them together.
 - **Trash**: deleted items can be restored for 30 days (with an instant Undo).
@@ -40,9 +44,13 @@ The same drive on your computer, with the same folders, favorites and trash:
 - Click opens a folder or file. Select with the checkbox that appears on hover, **Ctrl**-click,
   **Shift**-click or **Ctrl+A**; right-click for the menu. **Delete** trashes, **F2** renames,
   **Backspace** goes up.
-- **Viewer**: images (zoom with the mouse wheel, **←/→** to step through the folder) and text
-  files open in the app. Videos, music, PDFs and other files are fetched once and opened in
-  your default app.
+- **Built-in players, no other apps needed**: videos and music play in the app (FFmpeg is
+  bundled, so practically every format works: MP4, MKV, WebM, MOV, AVI, MP3, FLAC, Opus, Ogg,
+  AAC/M4A, WAV, ALAC…). They stream straight from Telegram, so they start at once and you can
+  seek anywhere. Images (mouse-wheel zoom), PDFs and text files open in the app too; **←/→**
+  steps through the folder, **Space** plays/pauses, double-click a video for fullscreen.
+- **Music player**: cover art and tags, queue of the folder's music, shuffle, repeat, volume,
+  and a mini player at the bottom of the window that keeps playing while you browse.
 - Downloads go to your Downloads folder (changeable in Settings).
 - Installing on Arch from the package file: `sudo pacman -U telegram-drive-*.pkg.tar.zst`.
   On Debian/Ubuntu: `sudo apt install ./telegram-drive_*.deb`. On Fedora:
@@ -77,15 +85,18 @@ Desktop app (`desktop/`):
 
 ```bash
 ./gradlew :desktop:run                          # run it
-./gradlew :desktop:packageDeb                   # or packageRpm / packageMsi / packageExe
-./gradlew :desktop:createDistributable          # app image, used for the Arch package
+./gradlew :desktop:createDistributable          # app image (Linux packages are built from it)
+packaging/linux/build-packages.sh desktop/build/compose/binaries/main/app/TelegramDrive 1.1.2 dist
+./gradlew :desktop:packageMsi                   # or packageExe, on Windows
 ./gradlew -PdesktopOnly=true :desktop:test      # without configuring the Android app
+desktop/make-media-samples.sh                   # test files for the player tests (needs ffmpeg)
 ```
 
 Packages can only be built for the OS you're on (Windows installers on Windows). Gradle
 downloads a Temurin JDK 21 for the bundled runtime. The GitHub Actions workflow
-`.github/workflows/desktop.yml` builds all of them; `packaging/arch/PKGBUILD` repackages the
-Linux app image for Arch.
+`.github/workflows/desktop.yml` builds all of them. The `.deb`/`.rpm` (needs `dpkg-deb` and
+`rpmbuild`) and `packaging/arch/PKGBUILD` repackage the Linux app image, with the menu entry and
+icons as package files so upgrades keep them.
 
 Signed release builds read the signing key from `local.properties`, which is never committed:
 

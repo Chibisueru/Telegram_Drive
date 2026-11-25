@@ -19,6 +19,14 @@ val tdlPlatform = when {
     "mac" in hostOs -> "macos/$hostArch"
     else -> "linux/$hostArch"
 }
+// FFmpeg (through JavaCV) plays video and music; only this OS's native build is bundled.
+val javacppPlatform = when {
+    "windows" in hostOs -> "windows-x86_64"
+    "mac" in hostOs -> if (hostArch == "arm64") "macosx-arm64" else "macosx-x86_64"
+    else -> if (hostArch == "arm64") "linux-arm64" else "linux-x86_64"
+}
+val javacvVersion = "1.5.14"
+val ffmpegVersion = "8.1.2-$javacvVersion"
 val tdlJvm: Configuration by configurations.creating { isTransitive = false }
 val slimTdlJar = tasks.register<Jar>("slimTdlJar") {
     archiveFileName.set("tdl-coroutines-jvm-${libs.versions.tdlCoroutines.get()}-${tdlPlatform.replace('/', '-')}.jar")
@@ -38,8 +46,19 @@ dependencies {
     implementation(compose.materialIconsExtended)
     implementation(libs.kotlinx.coroutines.swing)
     implementation(libs.kotlinx.serialization.json)
+    // Material You color math: builds the color scheme from the desktop's accent color.
+    implementation("com.materialkolor:material-color-utilities:5.0.1")
     tdlJvm("dev.g000sha256:tdl-coroutines-jvm:${libs.versions.tdlCoroutines.get()}")
     implementation(files(slimTdlJar))
+    // Built-in players: FFmpeg for video and audio (FLAC, Opus, MP3, AAC, MKV, WebM, H.264/HEVC…)
+    // via JavaCV's frame grabber, without JavaCV's computer-vision extras.
+    implementation("org.bytedeco:javacv:$javacvVersion") { isTransitive = false }
+    implementation("org.bytedeco:javacpp:$javacvVersion")
+    implementation("org.bytedeco:javacpp:$javacvVersion:$javacppPlatform")
+    implementation("org.bytedeco:ffmpeg:$ffmpegVersion")
+    implementation("org.bytedeco:ffmpeg:$ffmpegVersion:$javacppPlatform")
+    // Built-in PDF viewer.
+    implementation("org.apache.pdfbox:pdfbox:3.0.8")
     testImplementation(kotlin("test-junit"))
 }
 

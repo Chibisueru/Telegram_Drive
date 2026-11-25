@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -54,6 +55,7 @@ fun MainScreen(
     requestedTab: MutableStateFlow<Tab?>,
     sharedFiles: MutableStateFlow<List<Uri>>,
     onOpenFile: (String) -> Unit,
+    onOpenMusic: (String) -> Unit,
     onSignedOut: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOfTab(Tab.FILES) }
@@ -92,6 +94,11 @@ fun MainScreen(
 
     Scaffold(
         bottomBar = {
+            Column {
+            // Mini player while music plays; tap it to open the full player.
+            io.github.chibisueru.telegramdrive.ui.music.MiniPlayer(c.music) {
+                c.music.state.value.current?.fileId?.let(onOpenMusic)
+            }
             NavigationBar {
                 Tab.entries.forEach { t ->
                     NavigationBarItem(
@@ -105,6 +112,7 @@ fun MainScreen(
                         label = { Text(t.label) },
                     )
                 }
+            }
             }
         },
     ) { padding ->

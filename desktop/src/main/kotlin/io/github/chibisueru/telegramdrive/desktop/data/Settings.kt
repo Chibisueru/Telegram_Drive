@@ -17,6 +17,8 @@ data class AppSettings(
     val accountName: String = "",
     /** 0 = follow the system, 1 = light, 2 = dark. */
     val themeMode: Int = 0,
+    /** Take the colors from the desktop's accent color. */
+    val systemAccent: Boolean = true,
     val viewMode: ViewMode = ViewMode.LIST,
     val sortMode: SortMode = SortMode.NAME,
     /** Each folder's own sort order (key: folder ID, "root", or "special:…"). */

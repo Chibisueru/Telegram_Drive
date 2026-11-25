@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -94,8 +95,8 @@ private sealed interface Load {
 }
 
 /**
- * Full-window viewer. Images and text open right here (←/→ steps through the folder);
- * other files open in the system's default app once they've been fetched from Telegram.
+ * Full-window viewer (←/→ steps through the folder). Images, videos, music, PDFs and text play
+ * or open right here; only other file types fall back to the system's default app.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -107,13 +108,22 @@ fun Viewer(c: AppContainer, start: DriveFile, siblings: List<DriveFile>, onDownl
     LaunchedEffect(Unit) { focus.requestFocus() }
     LaunchedEffect(file.id) { c.drive.markOpened(file.id) }
     fun step(d: Int) { index = (index + d).coerceIn(0, list.lastIndex) }
+    /** Space plays/pauses the video or music on screen. */
+    var toggleMedia by remember { mutableStateOf<(() -> Unit)?>(null) }
+    LaunchedEffect(file.id) { toggleMedia = null }
+    val fullscreen = LocalFullscreen.current
+    val kind = kindOf(file.mimeType, file.name)
+    // A fullscreen video gets the whole window; leaving the video leaves fullscreen.
+    val immersive = kind == FileKind.VIDEO && fullscreen.isFullscreen()
+    LaunchedEffect(kind) { if (kind != FileKind.VIDEO && fullscreen.isFullscreen()) fullscreen.set(false) }
 
     Surface(
         color = Color(0xF0101114),
         modifier = Modifier.fillMaxSize().focusRequester(focus).focusable().onKeyEvent { e ->
             if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
             when (e.key) {
-                Key.Escape -> { onClose(); true }
+                Key.Escape -> { if (fullscreen.isFullscreen()) fullscreen.set(false) else onClose(); true }
+                Key.Spacebar -> { toggleMedia?.invoke(); toggleMedia != null }
                 Key.DirectionLeft -> { step(-1); true }
                 Key.DirectionRight -> { step(1); true }
                 else -> false
@@ -121,7 +131,7 @@ fun Viewer(c: AppContainer, start: DriveFile, siblings: List<DriveFile>, onDownl
         },
     ) {
         Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (!immersive) Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Close", tint = Color.White) }
                 Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                     Text(file.name, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -133,13 +143,15 @@ fun Viewer(c: AppContainer, start: DriveFile, siblings: List<DriveFile>, onDownl
                 IconButton(onClick = { onDownload(file) }) { Icon(Icons.Filled.Download, "Download", tint = Color.White) }
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                val kind = kindOf(file.mimeType, file.name)
                 when {
                     kind == FileKind.IMAGE && canPreviewImage(file.name) -> ImageView(c, file)
+                    kind == FileKind.VIDEO -> key(file.id) { VideoPlayerView(c, file) { toggleMedia = it } }
+                    kind == FileKind.AUDIO -> MusicPlayerView(c, file, list.filter { kindOf(it.mimeType, it.name) == FileKind.AUDIO }) { toggleMedia = it }
+                    kind == FileKind.PDF -> PdfFileView(c, file)
                     kind == FileKind.TEXT && file.size < 5_000_000 -> TextView(c, file)
                     else -> ExternalView(c, file, kind)
                 }
-                if (list.size > 1) {
+                if (list.size > 1 && !immersive) {
                     NavButton(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous", index > 0, Modifier.align(Alignment.CenterStart)) { step(-1) }
                     NavButton(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next", index < list.lastIndex, Modifier.align(Alignment.CenterEnd)) { step(1) }
                 }
@@ -155,6 +167,15 @@ private fun NavButton(icon: androidx.compose.ui.graphics.vector.ImageVector, lab
         onClick = onClick, modifier = modifier.padding(16.dp).size(48.dp), shape = CircleShape,
         colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.Black.copy(alpha = 0.5f), contentColor = Color.White),
     ) { Icon(icon, label) }
+}
+
+@Composable
+private fun PdfFileView(c: AppContainer, file: DriveFile) {
+    var attempt by remember(file.id) { mutableIntStateOf(0) }
+    when (val load = rememberLoad(c, file, attempt)) {
+        is Load.Ready -> key(file.id) { PdfView(load.file) }
+        else -> Loading(load) { attempt++ }
+    }
 }
 
 /** Fetches the whole file into TDLib's cache (reused if it's already there). */

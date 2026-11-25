@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
+import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -92,6 +94,23 @@ fun SettingsScreen(c: AppContainer, onSignedOut: () -> Unit, onMessage: (String)
                         ) { Text(label) }
                     }
                 }
+            }
+
+            val look by SystemLookWatcher.look.collectAsState()
+            Row(
+                Modifier.fillMaxWidth().clickable { c.settings.update { it.copy(systemAccent = !it.systemAccent) } }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.ColorLens, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.weight(1f).padding(start = 16.dp)) {
+                    Text("Use system accent color", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        if (look.accent != null) "Colors follow your desktop's accent color" else "Your desktop doesn't set an accent color, so the app's blue is used",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(s.systemAccent, { on -> c.settings.update { it.copy(systemAccent = on) } })
             }
 
             Section("Downloads")

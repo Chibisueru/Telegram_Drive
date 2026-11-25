@@ -95,11 +95,21 @@ fun ViewerScreen(fileId: String, onBack: () -> Unit) {
         return
     }
     val kind = kindOf(entity.mimeType, entity.name)
-    val dark = kind == FileKind.VIDEO || kind == FileKind.IMAGE
-    // Images can be swiped through; the bar and its actions follow the image on screen.
     val gallery by vm.gallery.collectAsStateWithLifecycle()
+
+    // Music opens the built-in player, with the folder's music as the queue.
+    if (kind == FileKind.AUDIO) {
+        val tracks = gallery
+        LaunchedEffect(tracks != null) { tracks?.let { vm.playMusic(it, fileId) } }
+        io.github.chibisueru.telegramdrive.ui.music.MusicPlayerScreen(vm.music, onBack)
+        return
+    }
+
+    val media = kind == FileKind.VIDEO || kind == FileKind.IMAGE
+    val dark = media
+    // Photos and videos can be swiped through; the bar and its actions follow the one on screen.
     var pageId by rememberSaveable { mutableStateOf(fileId) }
-    val shown = if (kind == FileKind.IMAGE) gallery?.firstOrNull { it.id == pageId } ?: entity else entity
+    val shown = if (media) gallery?.firstOrNull { it.id == pageId } ?: entity else entity
 
     FullscreenEffect(fullscreen)
 
@@ -113,7 +123,7 @@ fun ViewerScreen(fileId: String, onBack: () -> Unit) {
                         Column {
                             Text(shown.name, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
                             val list = gallery
-                            if (kind == FileKind.IMAGE && list != null && list.size > 1) {
+                            if (media && list != null && list.size > 1) {
                                 Text(
                                     "${list.indexOfFirst { it.id == shown.id } + 1} of ${list.size}",
                                     style = MaterialTheme.typography.bodySmall,
@@ -141,16 +151,20 @@ fun ViewerScreen(fileId: String, onBack: () -> Unit) {
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(if (fullscreen) androidx.compose.foundation.layout.PaddingValues() else padding)) {
             when (kind) {
-                FileKind.VIDEO, FileKind.AUDIO -> MediaPlayer(vm, entity, kind == FileKind.AUDIO, fullscreen) { fullscreen = it }
-                FileKind.IMAGE -> {
+                FileKind.VIDEO, FileKind.IMAGE -> {
                     val list = gallery
                     if (list == null) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     } else {
-                        ImagePager(
+                        MediaPager(
                             images = list.ifEmpty { listOf(entity) },
                             initialId = pageId,
-                            onPageChanged = { f -> pageId = f.id; vm.markOpened(f.id) },
+                            onPageChanged = { f ->
+                                pageId = f.id
+                                vm.markOpened(f.id)
+                                if (kindOf(f.mimeType, f.name) != FileKind.VIDEO) fullscreen = false
+                            },
+                            videoPage = { f, current -> VideoPage(vm, f, current, fullscreen) { fullscreen = it } },
                         )
                     }
                 }
@@ -179,49 +193,6 @@ fun ViewerScreen(fileId: String, onBack: () -> Unit) {
                 }
             },
             confirmButton = { TextButton(onClick = { showInfo = false }) { Text("Close") } },
-        )
-    }
-}
-
-@OptIn(UnstableApi::class)
-@Composable
-private fun MediaPlayer(vm: ViewerViewModel, file: FileEntity, audioOnly: Boolean, fullscreen: Boolean, onFullscreen: (Boolean) -> Unit) {
-    val player = remember(file.id) { vm.player(file) }
-    LifecycleResumeEffect(player) {
-        onPauseOrDispose { player.pause() }
-    }
-    Box(Modifier.fillMaxSize().background(if (audioOnly) MaterialTheme.colorScheme.surface else Color.Black)) {
-        if (audioOnly) {
-            Column(
-                Modifier.align(Alignment.Center).padding(32.dp).padding(bottom = 120.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Surface(shape = RoundedCornerShape(32.dp), color = MaterialTheme.colorScheme.tertiaryContainer, modifier = Modifier.size(200.dp)) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(FileKind.AUDIO.icon(), null, Modifier.size(96.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
-                    }
-                }
-                Text(file.name, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 24.dp))
-            }
-        }
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    this.player = player
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
-                    if (audioOnly) {
-                        controllerShowTimeoutMs = 0
-                        controllerHideOnTouch = false
-                        setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        showController()
-                    } else {
-                        setFullscreenButtonClickListener { onFullscreen(it) }
-                    }
-                }
-            },
-            update = { if (!audioOnly) it.setFullscreenButtonState(fullscreen) },
-            modifier = Modifier.fillMaxSize(),
         )
     }
 }

@@ -41,6 +41,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 
 /** A FragmentActivity because the system biometric prompt needs one. */
 class MainActivity : FragmentActivity() {
@@ -48,6 +49,12 @@ class MainActivity : FragmentActivity() {
     private val requestedTab = MutableStateFlow<Tab?>(null)
     /** Files shared into the app ("Share → Telegram Drive"), waiting for a destination folder. */
     private val sharedFiles = MutableStateFlow<List<Uri>>(emptyList())
+    /** Set when the music notification was tapped: open the player. */
+    private val openMusic = MutableStateFlow(false)
+
+    companion object {
+        const val EXTRA_OPEN_MUSIC = "open_music"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,6 +86,7 @@ class MainActivity : FragmentActivity() {
                             sessionLost = c.telegram.sessionLost,
                             requestedTab = requestedTab,
                             sharedFiles = sharedFiles,
+                            openMusic = openMusic,
                         )
                     }
                     if (s.pinEnabled && locked) {
@@ -104,6 +112,8 @@ class MainActivity : FragmentActivity() {
         super.onStart()
         // Pick up uploads/downloads left over from earlier (the service can only start while visible).
         container.transfers.resumeIfPending()
+        // Show the mini player again if music kept playing while the app was closed.
+        container.music.attach()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -112,6 +122,7 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_OPEN_MUSIC, false) == true) openMusic.value = true
         if (intent?.getStringExtra(TransferNotifications.EXTRA_OPEN_TAB) == TransferNotifications.TAB_TRANSFERS) {
             requestedTab.value = Tab.TRANSFERS
         }
@@ -134,8 +145,18 @@ private fun AppNav(
     sessionLost: StateFlow<Boolean>,
     requestedTab: MutableStateFlow<Tab?>,
     sharedFiles: MutableStateFlow<List<Uri>>,
+    openMusic: MutableStateFlow<Boolean>,
 ) {
     val nav = rememberNavController()
+    val music = LocalContext.current.container.music
+    val wantsMusic by openMusic.collectAsStateWithLifecycle()
+    LaunchedEffect(wantsMusic) {
+        if (!wantsMusic) return@LaunchedEffect
+        openMusic.value = false
+        music.attach()
+        val id = kotlinx.coroutines.withTimeoutOrNull(3_000) { music.state.first { it.current != null }.current?.fileId }
+        if (id != null && nav.currentDestination?.route != "setup") nav.navigate("viewer/$id") { launchSingleTop = true }
+    }
     val start = remember { if (startConfigured) "main" else "setup" }
     val lost by sessionLost.collectAsStateWithLifecycle()
     LaunchedEffect(lost) {
@@ -170,6 +191,7 @@ private fun AppNav(
                 requestedTab = requestedTab,
                 sharedFiles = sharedFiles,
                 onOpenFile = { nav.navigate("viewer/$it") },
+                onOpenMusic = { id -> nav.navigate("viewer/$id") { launchSingleTop = true } },
                 onSignedOut = { nav.navigate("setup") { popUpTo(0) { inclusive = true } } },
             )
         }
