@@ -29,7 +29,7 @@ jobs:
       - name: Build app image
         run: |
           desktop/make-media-samples.sh
-          ./gradlew -PdesktopOnly=true :desktop:test :desktop:createDistributable
+          ./gradlew --no-configuration-cache -PdesktopOnly=true :desktop:test :desktop:createDistributable
       - name: Check the packaged app's built-in players
         run: |
           m=desktop/build/media-samples
@@ -75,7 +75,7 @@ jobs:
         with: { distribution: temurin, java-version: '21' }
       - uses: gradle/actions/setup-gradle@v5
       - name: Build installers
-        run: ./gradlew -PdesktopOnly=true :desktop:packageMsi :desktop:packageExe
+        run: ./gradlew --no-configuration-cache -PdesktopOnly=true :desktop:packageMsi :desktop:packageExe
       - name: Collect
         shell: bash
         run: |
